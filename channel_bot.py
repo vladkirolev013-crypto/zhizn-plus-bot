@@ -33,6 +33,22 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
+# АНТИДОД 409
+# ============================================
+def kill_webhook():
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        response = requests.post(url, json={"drop_pending_updates": True})
+        logger.info(f"🧹 Удаление вебхука: {response.text}")
+        return response.json().get('ok', False)
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления вебхука: {e}")
+        return False
+
+kill_webhook()
+time.sleep(2)
+
+# ============================================
 # GIGACHAT
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
@@ -109,13 +125,6 @@ def ask_giga(system, user, max_tokens=2500):
         
         result = response.json()
         content = result['choices'][0]['message']['content']
-        
-        # ЛОГИРУЕМ ПОЛНЫЙ ОТВЕТ
-        logger.info("=" * 50)
-        logger.info("📥 ПОЛНЫЙ ОТВЕТ GIGACHAT:")
-        logger.info(content)
-        logger.info("=" * 50)
-        
         return content
         
     except requests.exceptions.Timeout:
@@ -141,21 +150,6 @@ def ask_giga_with_wait(system, user, max_tokens=2500):
 # TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
-
-try:
-    bot.remove_webhook()
-    logger.info("✅ Вебхук удалён")
-except Exception as e:
-    logger.warning(f"⚠️ Вебхук не удалялся: {e}")
-time.sleep(1)
-
-webhook_info = bot.get_webhook_info()
-if webhook_info.url:
-    logger.warning(f"⚠️ ВНИМАНИЕ! Вебхук всё ещё активен: {webhook_info.url}")
-    bot.remove_webhook()
-    logger.info("✅ Повторная попытка удаления вебхука")
-else:
-    logger.info("✅ Вебхук отсутствует")
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -190,47 +184,38 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# УПРОЩЁННЫЙ ГЕНЕРАТОР ТЕСТОВ + ЛОГИРОВАНИЕ
+# ГЕНЕРАТОР ТЕСТОВ
 # ============================================
 def generate_test_questions(topic, count=10):
-    # МАКСИМАЛЬНО ПРОСТОЙ ПРОМПТ
-    system = "Ты — психолог. Твоя задача — составить список вопросов для психологического теста."
+    system = "Ты — психолог. Составь вопросы для теста в формате JSON."
     user = f"""Составь {count} вопросов на тему "{topic}".
 
-    Каждый вопрос должен быть в формате JSON:
-    {{
-        "question": "текст вопроса?",
-        "options": {{
-            "A": "вариант 1",
-            "B": "вариант 2",
-            "C": "вариант 3",
-            "D": "вариант 4"
-        }},
-        "scores": {{
-            "A": 0,
-            "B": 1,
-            "C": 2,
-            "D": 3
+    Формат ответа (строгий JSON):
+    [
+        {{
+            "question": "текст вопроса?",
+            "options": {{
+                "A": "вариант 1",
+                "B": "вариант 2",
+                "C": "вариант 3",
+                "D": "вариант 4"
+            }},
+            "scores": {{
+                "A": 0,
+                "B": 1,
+                "C": 2,
+                "D": 3
+            }}
         }}
-    }}
+    ]
 
-    ОБЯЗАТЕЛЬНО используй ключи: question, options, scores.
-    Верни список из {count} вопросов в формате JSON.
-    НЕ добавляй пояснений, только JSON.
-    """
-
-    response = ask_giga_with_wait(system, user, max_tokens=3000)
+    Верни ТОЛЬКО JSON."""
     
+    response = ask_giga_with_wait(system, user, max_tokens=3000)
     if not response:
-        logger.error("❌ GigaChat вернул пустой ответ")
         return None
     
-    # ЛОГИРУЕМ ОТВЕТ
-    logger.info("📥 ОТВЕТ GIGACHAT ДЛЯ ТЕСТА:")
-    logger.info(response)
-    
     try:
-        # Ищем JSON
         start = response.find('[')
         if start == -1:
             start = response.find('{')
@@ -240,16 +225,12 @@ def generate_test_questions(topic, count=10):
             end = response.rfind('}') + 1
         
         if start == -1 or end == 0:
-            logger.error("❌ Не найден JSON в ответе")
-            logger.error(f"📄 Текст ответа: {response}")
+            logger.error("❌ JSON не найден")
             return None
         
         json_str = response[start:end]
-        logger.info(f"🔍 Извлечён JSON: {json_str[:200]}...")
-        
         data = json.loads(json_str)
         
-        # Если получили объект с ключом "questions" — берём его
         if isinstance(data, dict) and 'questions' in data:
             questions = data['questions']
         elif isinstance(data, list):
@@ -259,59 +240,68 @@ def generate_test_questions(topic, count=10):
             return None
         
         if not questions:
-            logger.error("❌ Пустой список вопросов")
+            logger.error("❌ Пустой список")
             return None
         
-        # ПРОВЕРЯЕМ СТРУКТУРУ
         parsed = []
-        for i, q in enumerate(questions):
-            # Проверяем наличие question
-            if 'question' not in q:
-                logger.warning(f"⚠️ Вопрос {i+1} без 'question': {q}")
+        for q in questions:
+            if 'question' not in q or 'options' not in q:
                 continue
-            
-            # Проверяем наличие options
-            if 'options' not in q:
-                logger.warning(f"⚠️ Вопрос {i+1} без 'options': {q}")
-                continue
-            
-            # Проверяем наличие scores
             if 'scores' not in q:
-                logger.warning(f"⚠️ Вопрос {i+1} без 'scores', ставим по умолчанию")
                 q['scores'] = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
-            
             parsed.append(q)
         
         if not parsed:
-            logger.error("❌ Не удалось распарсить ни одного вопроса")
             return None
         
-        logger.info(f"✅ Успешно распарсено {len(parsed)} вопросов")
         return parsed[:count]
         
-    except json.JSONDecodeError as e:
-        logger.error(f"❌ Ошибка JSON: {e}")
-        logger.error(f"📄 Проблемный текст: {response[:500]}")
-        return None
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error(f"❌ Ошибка парсинга: {e}")
         return None
 
+# ============================================
+# ГЕНЕРАТОР АНАЛИЗА (С РАЗДЕЛЕНИЕМ)
+# ============================================
 def generate_analysis(topic, answers, score, total, is_paid):
     min_len = 1400 if is_paid else 700
-    system = """Ты — команда из двух экспертов:
+
+    if is_paid:
+        system = """Ты — команда из двух экспертов:
 1. ПСИХОЛОГ — мягкий, понимающий, глубокий
 2. КОУЧ — бодрый, энергичный, направляющий
-Объедините свои голоса в один анализ."""
+
+Объедините свои голоса в один анализ. ВКЛЮЧИ в него:
+- Книги
+- Упражнения
+- Видео
+ВСЁ НА РУССКОМ ЯЗЫКЕ."""
+    else:
+        system = """Ты — психолог. Дай глубокий анализ личности.
+НЕ ДАВАЙ рекомендаций по книгам, видео или упражнениям.
+Только описание состояния, выводы и общие рекомендации без конкретных материалов."""
+
+    user = f"Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}. Напиши анализ (минимум {min_len} знаков)."
     
-    user = f"Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}. Напиши анализ (минимум {min_len} знаков) с рекомендациями книг, упражнений, видео на русском языке."
+    logger.info("📤 Генерирую анализ...")
     response = ask_giga_with_wait(system, user, max_tokens=3000 if is_paid else 2000)
+
     if not response:
+        logger.error("❌ GigaChat не ответил на запрос анализа")
         return None
+
+    logger.info(f"📥 Получен анализ. Длина: {len(response)} символов")
+    logger.info(f"📥 Текст анализа: {response[:300]}...")
+
     if len(response) < min_len * 0.7:
+        logger.warning(f"⚠️ Анализ слишком короткий ({len(response)} символов, нужно > {min_len})")
         return None
+
     return response
 
+# ============================================
+# ГЕНЕРАТОР ПОСТА
+# ============================================
 def generate_post(theme):
     system = "Ты — психолог. Напиши пост для Telegram."
     user = f"Тема: {theme}. Минимум 700 знаков."
