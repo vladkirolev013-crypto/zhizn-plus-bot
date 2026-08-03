@@ -16,7 +16,7 @@ from flask import Flask
 from PIL import Image, ImageDraw, ImageFont
 
 # ============================================
-# === НАСТРОЙКИ ===
+# НАСТРОЙКИ
 # ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
@@ -28,11 +28,11 @@ ADMIN_IDS = [8746212340]
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не установлен!")
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# === GIGACHAT ===
+# GIGACHAT — ТОЛЬКО ЗДЕСЬ, БЕЗ FALLBACK
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -40,36 +40,30 @@ def get_giga_token():
     if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
         return giga_token_cache["token"]
     
-    try:
-        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
-        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
-        headers = {
-            'Authorization': f'Basic {base64_auth}',
-            'RqUID': str(uuid.uuid4()),
-            'Content-Type': 'application/json'
-        }
-        response = requests.post(
-            'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
-            headers=headers,
-            json={"scope": "GIGACHAT_API_PERS"},
-            timeout=15
-        )
-        if response.status_code == 200:
-            token = response.json()['access_token']
-            giga_token_cache["token"] = token
-            giga_token_cache["expires"] = time.time() + 3500
-            logger.info("✅ Токен GigaChat получен")
-            return token
-        logger.error(f"❌ Ошибка токена: {response.status_code}")
+    auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
+    base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+    headers = {
+        'Authorization': f'Basic {base64_auth}',
+        'RqUID': str(uuid.uuid4()),
+        'Content-Type': 'application/json'
+    }
+    response = requests.post(
+        'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
+        headers=headers,
+        json={"scope": "GIGACHAT_API_PERS"},
+        timeout=15
+    )
+    if response.status_code != 200:
         return None
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения токена: {e}")
-        return None
+    token = response.json()['access_token']
+    giga_token_cache["token"] = token
+    giga_token_cache["expires"] = time.time() + 3500
+    return token
 
-def ask_giga(system_prompt, user_prompt, max_tokens=2500):
+def ask_giga(system, user, max_tokens=2500):
     token = get_giga_token()
     if not token:
-        raise Exception("Не удалось получить токен GigaChat")
+        return None
     
     headers = {
         'Authorization': f'Bearer {token}',
@@ -78,8 +72,8 @@ def ask_giga(system_prompt, user_prompt, max_tokens=2500):
     payload = {
         "model": "GigaChat",
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
         ],
         "temperature": 0.95,
         "max_tokens": max_tokens
@@ -92,46 +86,22 @@ def ask_giga(system_prompt, user_prompt, max_tokens=2500):
         timeout=60
     )
     
-    if response.status_code == 200:
-        return response.json()['choices'][0]['message']['content']
-    else:
-        raise Exception(f"GigaChat ошибка: {response.status_code}")
-
-def safe_ask_giga(system_prompt, user_prompt, chat_id=None):
-    """ТОЛЬКО GigaChat — БЕЗ ШАБЛОНОВ"""
-    try:
-        response = ask_giga(system_prompt, user_prompt)
-        return response
-    except Exception as e:
-        error_msg = f"❌ GigaChat ошибка: {str(e)}"
-        logger.error(error_msg)
-        
-        if chat_id:
-            try:
-                bot.send_message(chat_id, "❌ Сервис временно недоступен. Попробуйте позже.")
-            except:
-                pass
-        
-        for admin_id in ADMIN_IDS:
-            try:
-                bot.send_message(admin_id, f"❗ GigaChat ошибка:\n{error_msg}")
-            except:
-                pass
-        
+    if response.status_code != 200:
         return None
+    
+    return response.json()['choices'][0]['message']['content']
 
 # ============================================
-# === TELEGRAM БОТ ===
+# TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ============================================
-# === БАЗА ДАННЫХ ===
+# БАЗА ДАННЫХ
 # ============================================
 DB_PATH = 'channel.db'
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
-
 c.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
               topic TEXT, 
@@ -140,7 +110,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS daily_tests
 conn.commit()
 
 # ============================================
-# === ТЕМЫ ===
+# ТЕМЫ
 # ============================================
 TEST_TOPICS = {
     "психология": "🧠 Психологическое состояние",
@@ -152,16 +122,14 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# === ГЕНЕРАЦИЯ ТЕСТА ===
+# ГЕНЕРАЦИЯ — ТОЛЬКО GIGACHAT
 # ============================================
-def generate_test_questions(topic, count=10, chat_id=None):
+def generate_test_questions(topic, count=10):
     system = "Ты — психолог. Составь вопросы для теста. Формат: JSON."
     user = f"Составь {count} вопросов на тему '{topic}'. Верни ТОЛЬКО JSON."
-    
-    response = safe_ask_giga(system, user, chat_id)
+    response = ask_giga(system, user)
     if not response:
         return None
-    
     try:
         start = response.find('{')
         end = response.rfind('}') + 1
@@ -170,33 +138,21 @@ def generate_test_questions(topic, count=10, chat_id=None):
     except:
         return None
 
-# ============================================
-# === ГЕНЕРАЦИЯ АНАЛИЗА ===
-# ============================================
-def generate_analysis(topic, answers, score, total, is_paid, chat_id=None):
+def generate_analysis(topic, answers, score, total, is_paid):
     min_len = 1400 if is_paid else 700
     system = "Ты — психолог и коуч. Дай глубокий анализ."
-    user = f"""Тема: {topic}
-Ответы: {answers}
-Баллы: {score} из {total}
-
-Напиши анализ (минимум {min_len} знаков) с рекомендациями книг, упражнений, видео на русском языке."""
-    
-    response = safe_ask_giga(system, user, chat_id)
+    user = f"Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}. Напиши анализ (минимум {min_len} знаков) с рекомендациями книг, упражнений, видео на русском языке."
+    response = ask_giga(system, user)
     if not response:
         return None
     if len(response) < min_len * 0.7:
         return None
     return response
 
-# ============================================
-# === ГЕНЕРАЦИЯ ПОСТА ===
-# ============================================
-def generate_post(theme, chat_id=None):
+def generate_post(theme):
     system = "Ты — психолог. Напиши пост для Telegram."
     user = f"Тема: {theme}. Минимум 700 знаков."
-    
-    response = safe_ask_giga(system, user, chat_id)
+    response = ask_giga(system, user)
     if not response:
         return None
     if len(response) < 700:
@@ -204,7 +160,7 @@ def generate_post(theme, chat_id=None):
     return response
 
 # ============================================
-# === КАРТИНКИ И СЕРТИФИКАТ ===
+# КАРТИНКИ
 # ============================================
 def generate_result_image(score, total, topic):
     try:
@@ -227,12 +183,10 @@ def generate_certificate(name, topic, score, total):
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
         except:
             font = ImageFont.load_default()
-        
         draw.text((600, 100), "СЕРТИФИКАТ", fill=(0,0,0), font=font, anchor="mt")
         draw.text((600, 200), f"{name}", fill=(0,0,0), font=font, anchor="mt")
         draw.text((600, 300), f"Тема: {topic}", fill=(0,0,0), font=font, anchor="mt")
         draw.text((600, 400), f"Результат: {score} из {total*3}", fill=(0,0,0), font=font, anchor="mt")
-        
         filename = f'/tmp/cert_{int(time.time())}.png'
         img.save(filename)
         return filename
@@ -240,7 +194,7 @@ def generate_certificate(name, topic, score, total):
         return None
 
 # ============================================
-# === ВЕБ-СЕРВЕР ===
+# ВЕБ-СЕРВЕР
 # ============================================
 app = Flask(__name__)
 
@@ -259,7 +213,7 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ============================================
-# === МЕНЮ ===
+# МЕНЮ
 # ============================================
 def main_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -273,12 +227,12 @@ def test_menu():
     return mk
 
 # ============================================
-# === СОСТОЯНИЯ ===
+# СОСТОЯНИЯ
 # ============================================
 sessions = {}
 
 # ============================================
-# === КОМАНДЫ ===
+# КОМАНДЫ
 # ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -300,7 +254,7 @@ def start(message):
     bot.send_message(message.chat.id, "🌟 Жизнь+", reply_markup=main_menu())
 
 # ============================================
-# === КНОПКИ ===
+# КНОПКИ
 # ============================================
 @bot.message_handler(func=lambda m: m.text == '🎯 Тест')
 def choose_test(m):
@@ -332,7 +286,7 @@ def back(m):
     bot.send_message(m.chat.id, "Главное меню", reply_markup=main_menu())
 
 # ============================================
-# === ВЫБОР ТЕМЫ ===
+# ВЫБОР ТЕМЫ
 # ============================================
 def show_topics(m, ttype, count):
     mk = telebot.types.InlineKeyboardMarkup(row_width=2)
@@ -347,9 +301,9 @@ def topic_cb(c):
         ttype, topic, count = c.data.split('_')
         bot.edit_message_text("⏳ Генерация...", c.message.chat.id, c.message.message_id)
         
-        q = generate_test_questions(topic, int(count), c.message.chat.id)
+        q = generate_test_questions(topic, int(count))
         if not q:
-            bot.send_message(c.message.chat.id, "❌ Ошибка GigaChat")
+            bot.send_message(c.message.chat.id, "❌ GigaChat не ответил")
             return
         
         sessions[c.message.chat.id] = {'topic': topic, 'questions': q, 'answers': [], 'q': 0, 'scores': [], 'paid': ttype == 'paid'}
@@ -364,7 +318,7 @@ def cancel_cb(c):
     bot.send_message(c.message.chat.id, "Отменено", reply_markup=main_menu())
 
 # ============================================
-# === ПРОХОЖДЕНИЕ ТЕСТА ===
+# ПРОХОЖДЕНИЕ ТЕСТА
 # ============================================
 def send_q(chat_id):
     s = sessions.get(chat_id)
@@ -403,7 +357,7 @@ def answer(m):
     send_q(m.chat.id)
 
 # ============================================
-# === ЗАВЕРШЕНИЕ ===
+# ЗАВЕРШЕНИЕ
 # ============================================
 def finish(chat_id):
     s = sessions.get(chat_id)
@@ -417,9 +371,9 @@ def finish(chat_id):
     
     bot.send_message(chat_id, f"📊 Результат: {score} из {total}\n⏳ Анализ...")
     
-    analysis = generate_analysis(s['topic'], answers, score, len(s['questions'])*3, is_paid, chat_id)
+    analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
     if not analysis:
-        bot.send_message(chat_id, "❌ GigaChat ошибка")
+        bot.send_message(chat_id, "❌ GigaChat не ответил")
         del sessions[chat_id]
         return
     
@@ -440,13 +394,13 @@ def finish(chat_id):
     bot.send_message(chat_id, "✨ Готово!", reply_markup=main_menu())
 
 # ============================================
-# === ЕЖЕДНЕВНЫЙ ТЕСТ ===
+# ЕЖЕДНЕВНЫЙ ТЕСТ
 # ============================================
 def post_daily():
     topics = list(TEST_TOPICS.keys())
     random.shuffle(topics)
     for t in topics:
-        q = generate_test_questions(t, 10, ADMIN_IDS[0])
+        q = generate_test_questions(t, 10)
         if q:
             c.execute("INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
                       (t, json.dumps(q), datetime.now().isoformat()))
@@ -458,7 +412,7 @@ def post_daily():
             time.sleep(2)
 
 # ============================================
-# === АДМИН-КОМАНДЫ ===
+# АДМИН-КОМАНДЫ
 # ============================================
 @bot.message_handler(commands=['daily'])
 def cmd_daily(m):
@@ -471,24 +425,38 @@ def cmd_daily(m):
 def cmd_post(m):
     if m.chat.id in ADMIN_IDS:
         bot.send_message(m.chat.id, "📤 Генерация поста...")
-        text = generate_post("мотивация", m.chat.id)
-        if text:
-            bot.send_message(CHANNEL_ID, text)
-            bot.send_message(m.chat.id, "✅ Отправлено!")
-        else:
-            bot.send_message(m.chat.id, "❌ Ошибка")
+        text = generate_post("мотивация")
+        if not text:
+            bot.send_message(m.chat.id, "❌ GigaChat не ответил. Пост НЕ отправлен.")
+            return
+        bot.send_message(CHANNEL_ID, text)
+        bot.send_message(m.chat.id, "✅ Отправлено!")
 
 # ============================================
-# === ПЛАНИРОВЩИК ===
+# ПЛАНИРОВЩИК
 # ============================================
 scheduler = BackgroundScheduler()
-scheduler.add_job(lambda: post_daily(), 'cron', hour=10, minute=0)
-scheduler.add_job(lambda: bot.send_message(CHANNEL_ID, generate_post("утро") or "Пост"), 'cron', hour=8, minute=0)
-scheduler.add_job(lambda: bot.send_message(CHANNEL_ID, generate_post("вечер") or "Пост"), 'cron', hour=19, minute=0)
+
+def schedule_morning():
+    text = generate_post("утренняя мотивация")
+    if text:
+        bot.send_message(CHANNEL_ID, text)
+
+def schedule_daily():
+    post_daily()
+
+def schedule_evening():
+    text = generate_post("вечерняя мотивация")
+    if text:
+        bot.send_message(CHANNEL_ID, text)
+
+scheduler.add_job(schedule_morning, 'cron', hour=8, minute=0)
+scheduler.add_job(schedule_daily, 'cron', hour=10, minute=0)
+scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
 scheduler.start()
 
 # ============================================
-# === ЗАПУСК ===
+# ЗАПУСК
 # ============================================
 if __name__ == '__main__':
     print("🚀 БОТ ЗАПУЩЕН")
