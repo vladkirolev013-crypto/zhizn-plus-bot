@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 giga_token_cache = {"token": None, "expires": 0}
 
 def get_giga_token():
-    """Получает токен GigaChat с кешированием"""
     if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
         return giga_token_cache["token"]
     
@@ -69,7 +68,6 @@ def get_giga_token():
         return None
 
 def ask_giga(system_prompt, user_prompt, max_tokens=2000):
-    """Запрос к GigaChat"""
     token = get_giga_token()
     if not token:
         raise Exception("Не удалось получить токен GigaChat")
@@ -84,7 +82,7 @@ def ask_giga(system_prompt, user_prompt, max_tokens=2000):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.8,
+        "temperature": 0.9,
         "max_tokens": max_tokens
     }
     
@@ -101,7 +99,7 @@ def ask_giga(system_prompt, user_prompt, max_tokens=2000):
         raise Exception(f"Ошибка GigaChat: {response.status_code} - {response.text}")
 
 def safe_ask_giga(system_prompt, user_prompt, chat_id=None):
-    """Безопасный вызов GigaChat с уведомлением админа"""
+    """Безопасный вызов GigaChat — НЕТ FALLBACK"""
     try:
         return ask_giga(system_prompt, user_prompt)
     except Exception as e:
@@ -120,6 +118,7 @@ def safe_ask_giga(system_prompt, user_prompt, chat_id=None):
             except:
                 pass
         
+        # ВОЗВРАЩАЕМ NONE — НЕТ FALLBACK
         return None
 
 # ============================================
@@ -134,7 +133,6 @@ DB_PATH = 'channel.db'
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
 
-# ТОЛЬКО ОДНА ТАБЛИЦА
 c.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
               topic TEXT, 
@@ -155,14 +153,14 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# === ГЕНЕРАЦИЯ ТЕСТА ===
+# === ГЕНЕРАЦИЯ ТЕСТА (ТОЛЬКО GIGACHAT) ===
 # ============================================
 def generate_test_questions(topic, count=10, chat_id=None):
-    """Генерирует вопросы через GigaChat"""
     system = """Ты — профессиональный психолог с 20-летним опытом.
     Ты составляешь глубокие психологические тесты.
-    Вопросы должны заставлять задуматься, раскрывать личность.
-    Каждый вопрос должен иметь 4 варианта ответа с баллами от 0 до 3."""
+    Вопросы должны быть НЕБАНАЛЬНЫМИ, заставлять задуматься.
+    Каждый вопрос должен иметь 4 варианта ответа с баллами от 0 до 3.
+    ВАЖНО: Вопросы должны быть РАЗНЫМИ и НЕ ПОВТОРЯТЬСЯ."""
     
     user = f"""Составь {count} РАЗНЫХ, НЕ ПОВТОРЯЮЩИХСЯ вопросов на тему "{topic}".
     
@@ -205,7 +203,7 @@ def generate_test_questions(topic, count=10, chat_id=None):
         if len(questions) < count:
             return None
         
-        # Проверяем уникальность
+        # Убираем дубликаты
         unique = []
         seen = set()
         for q in questions:
@@ -223,10 +221,9 @@ def generate_test_questions(topic, count=10, chat_id=None):
         return None
 
 # ============================================
-# === ГЕНЕРАЦИЯ АНАЛИЗА ===
+# === ГЕНЕРАЦИЯ АНАЛИЗА (ТОЛЬКО GIGACHAT) ===
 # ============================================
 def generate_analysis(topic, answers_str, total_score, total_questions, is_paid=False, chat_id=None):
-    """Генерирует анализ через GigaChat"""
     max_score = total_questions * 3
     if max_score == 0:
         return None
@@ -249,60 +246,58 @@ def generate_analysis(topic, answers_str, total_score, total_questions, is_paid=
     1. Клинический психолог с 25-летним опытом
     2. Коуч по личностному росту
     
-    Проводи глубокий анализ результатов теста.
+    Ты проводишь ГЛУБОКИЙ, ПЕРСОНАЛЬНЫЙ анализ.
     ВСЕ РЕКОМЕНДАЦИИ ТОЛЬКО НА РУССКОМ ЯЗЫКЕ.
-    Пиши тепло, профессионально, с примерами."""
+    Ответ должен быть РАЗНЫМ КАЖДЫЙ РАЗ, не шаблонным.
+    Пиши тепло, профессионально, с примерами и конкретикой."""
     
-    user = f"""Проведи анализ теста по теме "{topic}".
+    user = f"""Проведи ГЛУБОКИЙ ПЕРСОНАЛЬНЫЙ анализ теста по теме "{topic}".
     
-    Ответы: {answers_str}
+    Ответы пользователя: {answers_str}
     Баллы: {total_score} из {max_score} ({percentage}%)
     Уровень: {level}
     
-    Напиши анализ МИНИМУМ на {min_length} знаков:
+    Напиши анализ МИНИМУМ на {min_length} знаков.
+    ОТВЕТ ДОЛЖЕН БЫТЬ УНИКАЛЬНЫМ И ПЕРСОНАЛЬНЫМ:
     
     1. 🧠 Оценка клинического психолога:
-       - Психологический портрет
+       - Психологический портрет личности
        - Сильные стороны и зоны роста
-       - Рекомендации
+       - Конкретные рекомендации
     
     2. 💼 Коучинговый разбор:
        - Оценка потенциала
-       - Шаги для развития
+       - Пошаговый план развития
        - Мотивационные техники
     
-    3. 📚 ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ ОТ ЭКСПЕРТОВ:
+    3. 📚 ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ:
        Подбери {rec_count} КНИГ на русском языке
        Подбери {rec_count} УПРАЖНЕНИЙ на русском языке
        Подбери {rec_count} ВИДЕО на русском языке
     
-    ВСЁ ТОЛЬКО НА РУССКОМ ЯЗЫКЕ!"""
+    ВСЁ ТОЛЬКО НА РУССКОМ ЯЗЫКЕ!
+    НЕ ИСПОЛЬЗУЙ ШАБЛОНЫ! ОТВЕТ ДОЛЖЕН БЫТЬ ИНДИВИДУАЛЬНЫМ!"""
     
     response = safe_ask_giga(system, user, chat_id)
     if not response:
         return None
     
-    if len(response) < min_length:
-        response += f"\n\n💫 Дополнительные рекомендации:\n"
-        if percentage >= 70:
-            response += "Вы на правильном пути! Продолжайте развиваться."
-        elif percentage >= 40:
-            response += "У вас хороший фундамент. Сфокусируйтесь на росте."
-        else:
-            response += "Начните с малого. Каждый шаг важен."
+    # Если ответ слишком короткий — это ошибка
+    if len(response) < min_length * 0.7:
+        return None
     
     return response
 
 # ============================================
-# === ГЕНЕРАЦИЯ ПОСТА ===
+# === ГЕНЕРАЦИЯ ПОСТА (ТОЛЬКО GIGACHAT) ===
 # ============================================
 def generate_post(theme, chat_id=None):
-    """Генерирует пост через GigaChat (1000+ знаков)"""
     system = """Ты — позитивный психолог и мотивационный спикер.
     Пиши глубокие, вдохновляющие посты для Telegram-канала.
-    Используй эмодзи, структурируй текст."""
+    Используй эмодзи, структурируй текст.
+    КАЖДЫЙ ПОСТ ДОЛЖЕН БЫТЬ УНИКАЛЬНЫМ."""
     
-    user = f"""Напиши РАЗВЕРНУТЫЙ пост для Telegram на тему "{theme}".
+    user = f"""Напиши РАЗВЕРНУТЫЙ, УНИКАЛЬНЫЙ пост для Telegram на тему "{theme}".
     
     Требования:
     1. Яркий заголовок с эмодзи
@@ -313,14 +308,15 @@ def generate_post(theme, chat_id=None):
     6. Мотивационная цитата
     7. 5-7 хештегов
     
-    ОБЩАЯ ДЛИНА: 1000-1300 знаков"""
+    ОБЩАЯ ДЛИНА: 1000-1300 знаков
+    ПОСТ ДОЛЖЕН БЫТЬ УНИКАЛЬНЫМ, НЕ ШАБЛОННЫМ"""
     
     response = safe_ask_giga(system, user, chat_id)
     if not response:
         return None
     
     if len(response) < 800:
-        response += f"\n\n💫 Помните: каждый день — это новая возможность стать лучше!"
+        return None
     
     return response
 
@@ -328,7 +324,6 @@ def generate_post(theme, chat_id=None):
 # === ГЕНЕРАЦИЯ КАРТИНКИ ===
 # ============================================
 def generate_result_image(score, total, topic):
-    """Генерирует картинку результата"""
     try:
         if total == 0:
             return None
@@ -356,12 +351,10 @@ def generate_result_image(score, total, topic):
 # === ГЕНЕРАЦИЯ СЕРТИФИКАТА ===
 # ============================================
 def generate_certificate(user_name, topic, score, total_questions):
-    """Генерирует сертификат"""
     try:
         img = Image.new('RGB', (1200, 800), color='white')
         draw = ImageDraw.Draw(img)
         
-        # Пытаемся загрузить шрифт
         try:
             font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
             font_text = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
@@ -380,17 +373,14 @@ def generate_certificate(user_name, topic, score, total_questions):
         
         bg_color = backgrounds.get(topic, (200, 230, 255))
         
-        # Градиент
         for i in range(800):
             r = int(bg_color[0] * (1 - i/1600) + 255 * (i/1600))
             g = int(bg_color[1] * (1 - i/1600) + 215 * (i/1600))
             b = int(bg_color[2] * (1 - i/1600) + 200 * (i/1600))
             draw.line([(0, i), (1200, i)], fill=(r, g, b), width=1)
         
-        # Рамка
         draw.rectangle([(20, 20), (1180, 780)], outline=(100, 100, 100), width=3)
         
-        # Текст
         draw.text((600, 80), "СЕРТИФИКАТ О ПРОХОЖДЕНИИ", fill=(50, 50, 150), font=font_title, anchor="mt")
         draw.text((600, 200), f"🌟 {user_name} 🌟", fill=(50, 50, 150), font=font_title, anchor="mt")
         draw.text((600, 280), "успешно прошел(ла) тест", fill=(80, 80, 80), font=font_text, anchor="mt")
@@ -428,12 +418,11 @@ def generate_certificate(user_name, topic, score, total_questions):
 # === УДАЛЕНИЕ СТАРЫХ ТЕСТОВ ===
 # ============================================
 def cleanup_old_daily_tests():
-    """Удаляет тесты старше 24 часов"""
     try:
         cutoff = (datetime.now() - timedelta(days=1)).isoformat()
         c.execute("DELETE FROM daily_tests WHERE created_at < ?", (cutoff,))
         conn.commit()
-        logger.info("🧹 Старые ежедневные тесты удалены")
+        logger.info("🧹 Старые тесты удалены")
     except Exception as e:
         logger.error(f"Ошибка очистки: {e}")
 
@@ -554,9 +543,7 @@ def post_daily_test():
                 logger.error(f"❌ Ошибка по теме {topic}: {e}")
                 continue
         
-        # Удаляем старые тесты
         cleanup_old_daily_tests()
-        
         logger.info(f"📊 Отправлено {sent_count} тестов")
         return sent_count > 0
         
@@ -595,7 +582,7 @@ def get_test_type_keyboard():
 user_test_data = {}
 
 # ============================================
-# === КОМАНДЫ БОТА ===
+# === КОМАНДЫ ===
 # ============================================
 @bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -647,7 +634,7 @@ def start_menu(message):
     bot.send_message(message.chat.id, welcome_text, reply_markup=get_main_keyboard())
 
 # ============================================
-# === ОБРАБОТЧИКИ КНОПОК ===
+# === ОБРАБОТЧИКИ ===
 # ============================================
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def show_test_selection(message):
@@ -855,7 +842,6 @@ def finish_test(chat_id):
     if not state:
         return
     
-    # Проверяем, что есть ответы
     if not state.get('scores'):
         bot.send_message(chat_id, "❌ Нет ответов для анализа.")
         del user_test_data[chat_id]
@@ -889,6 +875,7 @@ def finish_test(chat_id):
             chat_id
         )
         
+        # ЕСЛИ GIGACHAT НЕ ОТВЕТИЛ — НЕТ FALLBACK
         if not analysis:
             bot.send_message(chat_id, "❌ Не удалось сгенерировать анализ. Попробуйте позже.")
             del user_test_data[chat_id]
@@ -906,7 +893,7 @@ def finish_test(chat_id):
         except Exception as e:
             logger.error(f"Ошибка сертификата: {e}")
         
-        # Картинка результата
+        # Картинка
         try:
             img_path = generate_result_image(total_score, max_score, state['topic'])
             if img_path:
@@ -926,7 +913,7 @@ def finish_test(chat_id):
         else:
             bot.send_message(chat_id, result_text)
         
-        # НЕ СОХРАНЯЕМ РЕЗУЛЬТАТЫ В БАЗУ
+        # НЕ СОХРАНЯЕМ РЕЗУЛЬТАТЫ
         
         markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         markup.add(
@@ -1029,8 +1016,6 @@ if __name__ == '__main__':
         logger.error(f"❌ Канал {CHANNEL_ID} не найден: {e}")
     
     check_bot_in_channel()
-    
-    # Очищаем старые тесты при старте
     cleanup_old_daily_tests()
     
     logger.info("=" * 50)
