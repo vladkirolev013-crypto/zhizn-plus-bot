@@ -107,7 +107,16 @@ def ask_giga(system, user, max_tokens=2500):
             logger.error(f"❌ Текст ошибки: {response.text[:500]}")
             return None
         
-        return response.json()['choices'][0]['message']['content']
+        result = response.json()
+        content = result['choices'][0]['message']['content']
+        
+        # ЛОГИРУЕМ ПОЛНЫЙ ОТВЕТ
+        logger.info("=" * 50)
+        logger.info("📥 ПОЛНЫЙ ОТВЕТ GIGACHAT:")
+        logger.info(content)
+        logger.info("=" * 50)
+        
+        return content
         
     except requests.exceptions.Timeout:
         logger.error("❌ Таймаут GigaChat (60 секунд)")
@@ -129,7 +138,7 @@ def ask_giga_with_wait(system, user, max_tokens=2500):
     return result
 
 # ============================================
-# TELEGRAM БОТ — С ПРИНУДИТЕЛЬНЫМ УДАЛЕНИЕМ ВЕБХУКА
+# TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -146,7 +155,7 @@ if webhook_info.url:
     bot.remove_webhook()
     logger.info("✅ Повторная попытка удаления вебхука")
 else:
-    logger.info("✅ Вебхук отсутствует, бот работает через поллинг")
+    logger.info("✅ Вебхук отсутствует")
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -181,79 +190,111 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# ГЕНЕРАТОР ТЕСТОВ — С АДАПТИВНЫМ ПАРСИНГОМ
+# УПРОЩЁННЫЙ ГЕНЕРАТОР ТЕСТОВ + ЛОГИРОВАНИЕ
 # ============================================
 def generate_test_questions(topic, count=10):
-    system = "Ты — психолог. Составь вопросы для теста. Формат: JSON."
-    user = f"Составь {count} вопросов на тему '{topic}'. Верни ТОЛЬКО JSON."
-    response = ask_giga_with_wait(system, user)
+    # МАКСИМАЛЬНО ПРОСТОЙ ПРОМПТ
+    system = "Ты — психолог. Твоя задача — составить список вопросов для психологического теста."
+    user = f"""Составь {count} вопросов на тему "{topic}".
+
+    Каждый вопрос должен быть в формате JSON:
+    {{
+        "question": "текст вопроса?",
+        "options": {{
+            "A": "вариант 1",
+            "B": "вариант 2",
+            "C": "вариант 3",
+            "D": "вариант 4"
+        }},
+        "scores": {{
+            "A": 0,
+            "B": 1,
+            "C": 2,
+            "D": 3
+        }}
+    }}
+
+    ОБЯЗАТЕЛЬНО используй ключи: question, options, scores.
+    Верни список из {count} вопросов в формате JSON.
+    НЕ добавляй пояснений, только JSON.
+    """
+
+    response = ask_giga_with_wait(system, user, max_tokens=3000)
+    
     if not response:
+        logger.error("❌ GigaChat вернул пустой ответ")
         return None
     
+    # ЛОГИРУЕМ ОТВЕТ
+    logger.info("📥 ОТВЕТ GIGACHAT ДЛЯ ТЕСТА:")
+    logger.info(response)
+    
     try:
-        start = response.find('{')
-        end = response.rfind('}') + 1
+        # Ищем JSON
+        start = response.find('[')
+        if start == -1:
+            start = response.find('{')
+        
+        end = response.rfind(']') + 1
+        if end == 0:
+            end = response.rfind('}') + 1
+        
+        if start == -1 or end == 0:
+            logger.error("❌ Не найден JSON в ответе")
+            logger.error(f"📄 Текст ответа: {response}")
+            return None
+        
         json_str = response[start:end]
+        logger.info(f"🔍 Извлечён JSON: {json_str[:200]}...")
+        
         data = json.loads(json_str)
-        questions = data.get('questions', [])
+        
+        # Если получили объект с ключом "questions" — берём его
+        if isinstance(data, dict) and 'questions' in data:
+            questions = data['questions']
+        elif isinstance(data, list):
+            questions = data
+        else:
+            logger.error(f"❌ Неизвестный формат: {type(data)}")
+            return None
         
         if not questions:
-            logger.error("❌ Нет ключа 'questions' в ответе")
+            logger.error("❌ Пустой список вопросов")
             return None
         
-        # АДАПТИВНЫЙ ПАРСИНГ
+        # ПРОВЕРЯЕМ СТРУКТУРУ
         parsed = []
-        for q in questions:
-            # Ищем ключи с вариантами ответов
-            options = q.get('options') or q.get('variants') or q.get('answers') or q.get('choices')
-            
-            if not options:
-                logger.error(f"❌ Нет вариантов ответа в вопросе: {q}")
+        for i, q in enumerate(questions):
+            # Проверяем наличие question
+            if 'question' not in q:
+                logger.warning(f"⚠️ Вопрос {i+1} без 'question': {q}")
                 continue
             
-            # Преобразуем в нужный формат
-            if isinstance(options, dict):
-                # Если пришёл словарь {'A': 'текст', 'B': 'текст'}
-                options_dict = options
-            elif isinstance(options, list):
-                # Если пришёл список ['текст1', 'текст2', 'текст3', 'текст4']
-                options_dict = {
-                    'A': options[0] if len(options) > 0 else '',
-                    'B': options[1] if len(options) > 1 else '',
-                    'C': options[2] if len(options) > 2 else '',
-                    'D': options[3] if len(options) > 3 else ''
-                }
-            else:
-                logger.error(f"❌ Неизвестный формат вариантов: {options}")
+            # Проверяем наличие options
+            if 'options' not in q:
+                logger.warning(f"⚠️ Вопрос {i+1} без 'options': {q}")
                 continue
             
-            # Ищем баллы
-            scores = q.get('scores') or q.get('points') or q.get('values')
-            if scores and isinstance(scores, dict):
-                scores_dict = scores
-            else:
-                # Если баллов нет — ставим по умолчанию (0,1,2,3)
-                scores_dict = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+            # Проверяем наличие scores
+            if 'scores' not in q:
+                logger.warning(f"⚠️ Вопрос {i+1} без 'scores', ставим по умолчанию")
+                q['scores'] = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
             
-            parsed.append({
-                'question': q.get('question') or q.get('text') or 'Вопрос',
-                'options': options_dict,
-                'scores': scores_dict
-            })
+            parsed.append(q)
         
         if not parsed:
-            logger.error("❌ Не удалось распарсить вопросы")
+            logger.error("❌ Не удалось распарсить ни одного вопроса")
             return None
         
-        logger.info(f"✅ Распарсено {len(parsed)} вопросов")
+        logger.info(f"✅ Успешно распарсено {len(parsed)} вопросов")
         return parsed[:count]
         
     except json.JSONDecodeError as e:
         logger.error(f"❌ Ошибка JSON: {e}")
-        logger.error(f"❌ Текст: {response[:500]}")
+        logger.error(f"📄 Проблемный текст: {response[:500]}")
         return None
     except Exception as e:
-        logger.error(f"❌ Ошибка парсинга: {e}")
+        logger.error(f"❌ Ошибка: {e}")
         return None
 
 def generate_analysis(topic, answers, score, total, is_paid):
