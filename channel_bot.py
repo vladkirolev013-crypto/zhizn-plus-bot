@@ -24,6 +24,7 @@ CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
 
+# ТВОЙ ID (АДМИН)
 ADMIN_IDS = [8746212340]
 
 if not BOT_TOKEN:
@@ -89,7 +90,7 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
-        # ЖДЕМ ОТВЕТА ДО 60 СЕКУНД
+        # ЖДЕМ ОТВЕТА ДО 60 СЕКУНД (НО ПОКАЗЫВАЕМ ТОЛЬКО ЧЕРЕЗ 40)
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -109,6 +110,22 @@ def ask_giga(system, user, max_tokens=2500):
         return None
 
 # ============================================
+# ФУНКЦИЯ С ПРИНУДИТЕЛЬНЫМ ОЖИДАНИЕМ 40 СЕКУНД
+# ============================================
+def ask_giga_with_wait(system, user, max_tokens=2500):
+    """Отправляет запрос в GigaChat, но ответ ВСЕГДА приходит не раньше чем через 40 секунд"""
+    start_time = time.time()
+    result = ask_giga(system, user, max_tokens)
+    elapsed = time.time() - start_time
+    
+    # Если ответ пришел быстрее чем за 40 секунд — ждем оставшееся время
+    if elapsed < 40:
+        wait_time = 40 - elapsed
+        time.sleep(wait_time)
+    
+    return result
+
+# ============================================
 # TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -126,6 +143,14 @@ c.execute('''CREATE TABLE IF NOT EXISTS daily_tests
               topic TEXT, 
               questions TEXT, 
               created_at TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS stats 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+              free_count INTEGER DEFAULT 0, 
+              paid_count INTEGER DEFAULT 0)''')
+# Добавляем начальную запись, если её нет
+c.execute("SELECT COUNT(*) FROM stats")
+if c.fetchone()[0] == 0:
+    c.execute("INSERT INTO stats (free_count, paid_count) VALUES (0, 0)")
 conn.commit()
 
 # ============================================
@@ -141,12 +166,12 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# ГЕНЕРАТОРЫ (ВСЁ ЧЕРЕЗ GIGACHAT)
+# ГЕНЕРАТОРЫ (ВСЁ ЧЕРЕЗ GIGACHAT С ОЖИДАНИЕМ 40 СЕК)
 # ============================================
 def generate_test_questions(topic, count=10):
     system = "Ты — психолог. Составь вопросы для теста. Формат: JSON."
     user = f"Составь {count} вопросов на тему '{topic}'. Верни ТОЛЬКО JSON."
-    response = ask_giga(system, user)
+    response = ask_giga_with_wait(system, user)
     if not response:
         return None
     try:
@@ -161,7 +186,7 @@ def generate_analysis(topic, answers, score, total, is_paid):
     min_len = 1400 if is_paid else 700
     system = "Ты — психолог и коуч. Дай глубокий анализ."
     user = f"Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}. Напиши анализ (минимум {min_len} знаков) с рекомендациями книг, упражнений, видео на русском языке."
-    response = ask_giga(system, user)
+    response = ask_giga_with_wait(system, user)
     if not response:
         return None
     if len(response) < min_len * 0.7:
@@ -171,12 +196,25 @@ def generate_analysis(topic, answers, score, total, is_paid):
 def generate_post(theme):
     system = "Ты — психолог. Напиши пост для Telegram."
     user = f"Тема: {theme}. Минимум 700 знаков."
-    response = ask_giga(system, user)
+    response = ask_giga_with_wait(system, user)
     if not response:
         return None
     if len(response) < 700:
         return None
     return response
+
+def generate_image():
+    """Генерирует позитивную картинку"""
+    try:
+        prompt = "positive motivation inspiration beautiful landscape"
+        url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?width=1080&height=720&nologo=true"
+        img = requests.get(url, timeout=30).content
+        filename = f'/tmp/image_{int(time.time())}.jpg'
+        with open(filename, 'wb') as f:
+            f.write(img)
+        return filename
+    except:
+        return None
 
 # ============================================
 # ВЕБ-СЕРВЕР
@@ -198,14 +236,27 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ============================================
-# МЕНЮ С КНОПКАМИ
+# ГЛАВНОЕ МЕНЮ (ДЛЯ ВСЕХ)
 # ============================================
 def main_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    mk.add('🎯 Пройти тест', '📋 О тестах')
+    mk.add('🚀 Старт', '🎯 Пройти тест')
     mk.add('❤️ О канале')
     return mk
 
+# ============================================
+# АДМИН-МЕНЮ (ВИДНО ТОЛЬКО ТЕБЕ)
+# ============================================
+def admin_menu():
+    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    mk.add('📤 Отправить пост', '🧠 Тест в канал')
+    mk.add('🖼 Картинка в канал', '📊 Статистика')
+    mk.add('🚀 Старт')
+    return mk
+
+# ============================================
+# МЕНЮ ВЫБОРА ТИПА ТЕСТА
+# ============================================
 def test_type_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🧠 Бесплатный (10 вопросов)')
@@ -214,7 +265,7 @@ def test_type_menu():
     return mk
 
 # ============================================
-# СОСТОЯНИЯ ПОЛЬЗОВАТЕЛЕЙ
+# СОСТОЯНИЯ
 # ============================================
 sessions = {}
 
@@ -223,6 +274,7 @@ sessions = {}
 # ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
+    # Проверка перехода по ежедневному тесту
     if ' ' in message.text:
         param = message.text.split(' ', 1)[1]
         if param.startswith('daily_'):
@@ -246,15 +298,52 @@ def start(message):
             except:
                 pass
     
-    bot.send_message(
-        message.chat.id,
+    # Приветствие
+    welcome_text = (
         "🌟 Добро пожаловать в бота Жизнь+!\n\n"
-        "👇 Нажмите кнопку «🎯 Пройти тест» чтобы начать!",
-        reply_markup=main_menu()
+        "Я здесь, чтобы помочь тебе узнать себя глубже.\n"
+        "Нажми «🎯 Пройти тест», чтобы начать, или «❤️ О канале», чтобы узнать больше."
     )
+    
+    # Показываем нужное меню
+    if message.chat.id in ADMIN_IDS:
+        bot.send_message(message.chat.id, welcome_text, reply_markup=admin_menu())
+    else:
+        bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu())
 
 # ============================================
-# ОБРАБОТЧИКИ КНОПОК ГЛАВНОГО МЕНЮ
+# КНОПКА СТАРТ
+# ============================================
+@bot.message_handler(func=lambda m: m.text == '🚀 Старт')
+def start_button(message):
+    start(message)
+
+# ============================================
+# КНОПКА О КАНАЛЕ (НЛП-ОПИСАНИЕ)
+# ============================================
+@bot.message_handler(func=lambda m: m.text == '❤️ О канале')
+def about_channel(message):
+    text = (
+        "Жизнь+ — это не просто канал. Это пространство, где каждый день начинается с новой силы. "
+        "Здесь ты находишь ответы, которых не ждал, и чувствуешь, как внутри просыпается энергия, "
+        "которую ты давно искал. Мы говорим о том, что действительно важно — о внутренней опоре, "
+        "о легкости в теле и ясности в голове. Подпишись, чтобы напоминать себе: ты уже на верном пути. "
+        "А бот Жизнь+ поможет тебе заглянуть в себя глубже и увидеть то, что всегда было с тобой."
+    )
+    
+    mk = telebot.types.InlineKeyboardMarkup()
+    mk.add(telebot.types.InlineKeyboardButton(
+        "📢 Перейти в канал",
+        url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"
+    ))
+    
+    if message.chat.id in ADMIN_IDS:
+        bot.send_message(message.chat.id, text, reply_markup=mk)
+    else:
+        bot.send_message(message.chat.id, text, reply_markup=mk)
+
+# ============================================
+# КНОПКА "ПРОЙТИ ТЕСТ"
 # ============================================
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def choose_test_type(message):
@@ -267,41 +356,15 @@ def choose_test_type(message):
         reply_markup=test_type_menu()
     )
 
-@bot.message_handler(func=lambda m: m.text == '📋 О тестах')
-def about_tests(message):
-    text = (
-        "📋 О ТЕСТАХ ЖИЗНЬ+\n\n"
-        "🧠 Бесплатный тест:\n"
-        "• 10 вопросов\n"
-        "• Анализ 700+ знаков\n\n"
-        "💎 Платный тест:\n"
-        "• 20 вопросов\n"
-        "• Анализ 1400+ знаков\n"
-        "• Книги, упражнения, видео\n\n"
-        "✅ Результаты НЕ сохраняются"
-    )
-    bot.send_message(message.chat.id, text, reply_markup=main_menu())
-
-@bot.message_handler(func=lambda m: m.text == '❤️ О канале')
-def about_channel(message):
-    mk = telebot.types.InlineKeyboardMarkup()
-    mk.add(telebot.types.InlineKeyboardButton(
-        "📢 Перейти в канал",
-        url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"
-    ))
-    bot.send_message(
-        message.chat.id,
-        f"❤️ О КАНАЛЕ ЖИЗНЬ+\n\n"
-        f"📌 Подписывайтесь: {CHANNEL_ID}",
-        reply_markup=mk
-    )
-
+# ============================================
+# КНОПКА "НАЗАД В ГЛАВНОЕ МЕНЮ"
+# ============================================
 @bot.message_handler(func=lambda m: m.text == '🔙 Главное меню')
 def back_to_main(message):
-    bot.send_message(message.chat.id, "🌟 Главное меню", reply_markup=main_menu())
+    start(message)
 
 # ============================================
-# ОБРАБОТЧИКИ ВЫБОРА ТИПА ТЕСТА
+# ОБРАБОТЧИКИ ТИПОВ ТЕСТА
 # ============================================
 @bot.message_handler(func=lambda m: m.text == '🧠 Бесплатный (10 вопросов)')
 def free_test(message):
@@ -431,7 +494,7 @@ def handle_answer(message):
     send_question(message.chat.id)
 
 # ============================================
-# ЗАВЕРШЕНИЕ ТЕСТА
+# ЗАВЕРШЕНИЕ ТЕСТА + СТАТИСТИКА
 # ============================================
 def finish_test(chat_id):
     s = sessions.get(chat_id)
@@ -442,6 +505,13 @@ def finish_test(chat_id):
     total = len(s['questions']) * 3
     answers = ', '.join(s['answers'])
     is_paid = s.get('is_paid', False)
+    
+    # ОБНОВЛЯЕМ СТАТИСТИКУ
+    if is_paid:
+        c.execute("UPDATE stats SET paid_count = paid_count + 1")
+    else:
+        c.execute("UPDATE stats SET free_count = free_count + 1")
+    conn.commit()
     
     bot.send_message(
         chat_id,
@@ -461,6 +531,7 @@ def finish_test(chat_id):
         del sessions[chat_id]
         return
     
+    # Отправляем результат
     bot.send_message(
         chat_id,
         f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}",
@@ -471,55 +542,184 @@ def finish_test(chat_id):
     bot.send_message(chat_id, "✨ Готово!", reply_markup=main_menu())
 
 # ============================================
+# АДМИН-КНОПКИ
+# ============================================
+@bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
+def admin_post(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ Это может занять до 40 секунд.")
+    text = generate_post("мотивация")
+    
+    if not text:
+        bot.send_message(message.chat.id, "❌ GigaChat не ответил. Пост НЕ отправлен.")
+        return
+    
+    bot.send_message(CHANNEL_ID, text)
+    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
+
+@bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
+def admin_test_to_channel(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    # Показываем выбор темы
+    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+    for topic, emoji in TEST_TOPICS.items():
+        mk.add(telebot.types.InlineKeyboardButton(
+            emoji,
+            callback_data=f"admin_test_{topic}"
+        ))
+    mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="admin_cancel"))
+    
+    bot.send_message(
+        message.chat.id,
+        "🎯 Выберите тему для теста в канал:",
+        reply_markup=mk
+    )
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('admin_test_'))
+def admin_test_topic_callback(c):
+    try:
+        topic = c.data.replace('admin_test_', '')
+        
+        bot.edit_message_text(
+            f"⏳ Генерирую тест по теме {topic}...\nЭто может занять до 40 секунд.",
+            c.message.chat.id,
+            c.message.message_id
+        )
+        
+        questions = generate_test_questions(topic, 10)
+        
+        if not questions:
+            bot.send_message(
+                c.message.chat.id,
+                "❌ Не удалось сгенерировать тест. Попробуйте позже."
+            )
+            return
+        
+        # Сохраняем в базу
+        c.execute(
+            "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
+            (topic, json.dumps(questions), datetime.now().isoformat())
+        )
+        conn.commit()
+        test_id = c.lastrowid
+        
+        # Отправляем в канал
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton(
+            "🎯 Пройти тест",
+            url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"
+        ))
+        
+        bot.send_message(
+            CHANNEL_ID,
+            f"🧠 ТЕСТ ПО ТЕМЕ: {topic.upper()}\n\n"
+            f"📊 10 вопросов\n\n"
+            f"Проверьте себя прямо сейчас!",
+            reply_markup=mk
+        )
+        
+        bot.edit_message_text(
+            f"✅ Тест по теме {topic} отправлен в канал!",
+            c.message.chat.id,
+            c.message.message_id
+        )
+        
+    except Exception as e:
+        bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
+
+@bot.callback_query_handler(func=lambda c: c.data == 'admin_cancel')
+def admin_cancel(c):
+    bot.delete_message(c.message.chat.id, c.message.message_id)
+    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=admin_menu())
+
+@bot.message_handler(func=lambda m: m.text == '🖼 Картинка в канал')
+def admin_image(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    bot.send_message(message.chat.id, "🖼 Генерирую картинку...")
+    
+    img_path = generate_image()
+    if img_path:
+        with open(img_path, 'rb') as photo:
+            bot.send_photo(CHANNEL_ID, photo)
+        os.remove(img_path)
+        bot.send_message(message.chat.id, "✅ Картинка отправлена в канал!")
+    else:
+        bot.send_message(message.chat.id, "❌ Не удалось сгенерировать картинку.")
+
+@bot.message_handler(func=lambda m: m.text == '📊 Статистика')
+def admin_stats(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    c.execute("SELECT free_count, paid_count FROM stats LIMIT 1")
+    row = c.fetchone()
+    
+    if row:
+        free_count, paid_count = row
+        text = (
+            "📊 СТАТИСТИКА ТЕСТОВ\n\n"
+            f"🧠 Бесплатных тестов пройдено: {free_count}\n"
+            f"💎 Платных тестов пройдено: {paid_count}\n\n"
+            f"Всего: {free_count + paid_count}"
+        )
+    else:
+        text = "📊 Статистика пока пуста."
+    
+    bot.send_message(message.chat.id, text)
+
+# ============================================
 # ЕЖЕДНЕВНЫЙ ТЕСТ В КАНАЛ
 # ============================================
 def post_daily_test():
     topics = list(TEST_TOPICS.keys())
     random.shuffle(topics)
+    topic = topics[0]  # Берем одну случайную тему
     
-    for topic in topics:
-        questions = generate_test_questions(topic, 10)
-        if questions:
-            c.execute(
-                "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
-                (topic, json.dumps(questions), datetime.now().isoformat())
-            )
-            conn.commit()
-            test_id = c.lastrowid
-            
-            mk = telebot.types.InlineKeyboardMarkup()
-            mk.add(telebot.types.InlineKeyboardButton(
-                "🎯 Пройти тест",
-                url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"
-            ))
-            
-            bot.send_message(
-                CHANNEL_ID,
-                f"🧠 ЕЖЕДНЕВНЫЙ ТЕСТ ДНЯ!\n\n"
-                f"📌 Тема: {topic.title()}\n"
-                f"📊 Вопросов: 10\n\n"
-                f"Проверьте себя прямо сейчас!",
-                reply_markup=mk
-            )
-            time.sleep(2)
+    questions = generate_test_questions(topic, 10)
+    if questions:
+        c.execute(
+            "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
+            (topic, json.dumps(questions), datetime.now().isoformat())
+        )
+        conn.commit()
+        test_id = c.lastrowid
+        
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton(
+            "🎯 Пройти тест",
+            url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"
+        ))
+        
+        bot.send_message(
+            CHANNEL_ID,
+            f"🧠 ЕЖЕДНЕВНЫЙ ТЕСТ ДНЯ!\n\n"
+            f"📌 Тема: {topic.title()}\n"
+            f"📊 Вопросов: 10\n\n"
+            f"Проверьте себя прямо сейчас!",
+            reply_markup=mk
+        )
 
 # ============================================
-# АДМИН-КОМАНДЫ
+# АДМИН-КОМАНДЫ (ДЛЯ КОМАНД)
 # ============================================
 @bot.message_handler(commands=['daily'])
 def cmd_daily(message):
     if message.chat.id not in ADMIN_IDS:
-        bot.send_message(message.chat.id, "⛔ Нет прав.")
         return
     
-    bot.send_message(message.chat.id, "📤 Отправка ежедневных тестов...")
+    bot.send_message(message.chat.id, "📤 Отправка ежедневного теста...")
     post_daily_test()
     bot.send_message(message.chat.id, "✅ Готово!")
 
 @bot.message_handler(commands=['post'])
 def cmd_post(message):
     if message.chat.id not in ADMIN_IDS:
-        bot.send_message(message.chat.id, "⛔ Нет прав.")
         return
     
     bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ Это может занять до 40 секунд.")
