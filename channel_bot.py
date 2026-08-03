@@ -59,7 +59,8 @@ def get_giga_token():
         logger.error(f"❌ Ошибка получения токена: {e}")
         return None
 
-def ask_giga(system_prompt, user_prompt):
+def ask_giga(system_prompt, user_prompt, max_tokens=2000):
+    """Запрос к GigaChat с возможностью увеличить токены"""
     token = get_giga_token()
     if not token:
         raise Exception("Не удалось получить токен GigaChat")
@@ -75,7 +76,7 @@ def ask_giga(system_prompt, user_prompt):
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.8,
-        "max_tokens": 2000
+        "max_tokens": max_tokens
     }
     
     response = requests.post(
@@ -127,24 +128,30 @@ TEST_TOPICS = {
     "личность": "🌟 Характер, темперамент, личностные качества"
 }
 
-# === ГЕНЕРАЦИЯ ТЕСТА ЧЕРЕЗ GIGACHAT ===
+# === ГЕНЕРАЦИЯ ТЕСТА ЧЕРЕЗ GIGACHAT (ВСЕГДА НОВЫЙ) ===
 def generate_test_questions(topic, count=10):
-    """Генерирует уникальные вопросы для теста через GigaChat"""
+    """
+    Генерирует УНИКАЛЬНЫЕ вопросы для теста через GigaChat.
+    Каждый раз - новые вопросы!
+    """
     try:
-        logger.info(f"Генерирую тест по теме: {topic}, {count} вопросов")
+        logger.info(f"🔄 Генерирую НОВЫЙ тест по теме: {topic}, {count} вопросов")
         
         system = """Ты — профессиональный психолог и коуч с 20-летним опытом. 
         Ты составляешь глубокие психологические тесты. 
         Вопросы должны быть небанальными, заставлять задуматься, раскрывать личность.
-        Каждый вопрос должен иметь 4 варианта ответа с разными баллами (от 0 до 3)."""
+        Каждый вопрос должен иметь 4 варианта ответа с разными баллами (от 0 до 3).
+        ВАЖНО: Каждый раз составляй НОВЫЕ, РАЗНЫЕ вопросы. Не повторяйся!"""
         
-        user = f"""Составь тест на тему "{topic}" из {count} вопросов.
+        user = f"""Составь тест на тему "{topic}" из {count} РАЗНЫХ, НЕ ПОВТОРЯЮЩИХСЯ вопросов.
         
         Требования:
-        1. Вопросы должны быть глубокими и психологическими
+        1. Вопросы должны быть глубокими, психологическими, заставлять задуматься
         2. Каждый вопрос с 4 вариантами ответов (A, B, C, D)
         3. Для каждого варианта укажи баллы (0-3), где 0 - наименее здоровый ответ, 3 - наиболее здоровый
-        4. Вопросы должны раскрывать разные аспекты темы
+        4. Вопросы должны раскрывать РАЗНЫЕ аспекты темы
+        5. ВАЖНО: Все {count} вопросов должны быть РАЗНЫМИ!
+        6. Вопросы должны быть развернутыми и интересными
         
         Формат ответа (строго JSON):
         {{
@@ -167,9 +174,9 @@ def generate_test_questions(topic, count=10):
             ]
         }}
         
-        Верни только JSON, без лишнего текста."""
+        Верни ТОЛЬКО JSON, без лишнего текста."""
         
-        response = ask_giga(system, user)
+        response = ask_giga(system, user, max_tokens=3000)
         
         # Извлекаем JSON из ответа
         start = response.find('{')
@@ -177,116 +184,133 @@ def generate_test_questions(topic, count=10):
         if start != -1 and end != -1:
             json_str = response[start:end]
             data = json.loads(json_str)
-            return data.get('questions', [])
+            questions = data.get('questions', [])
+            
+            if len(questions) >= count:
+                # Проверяем уникальность
+                unique = []
+                seen = set()
+                for q in questions:
+                    q_text = q.get('question', '')
+                    if q_text not in seen:
+                        seen.add(q_text)
+                        unique.append(q)
+                
+                if len(unique) >= count:
+                    logger.info(f"✅ Сгенерировано {len(unique)} уникальных вопросов")
+                    return unique[:count]
+                else:
+                    logger.warning(f"⚠️ Только {len(unique)} уникальных, нужно {count}")
+                    # Добираем запасными
+                    fallback = get_fallback_questions(topic, count - len(unique))
+                    return unique + fallback
+            else:
+                logger.warning(f"⚠️ Получено {len(questions)} вопросов, нужно {count}")
+                # Добираем запасными
+                fallback = get_fallback_questions(topic, count - len(questions))
+                return questions + fallback
         else:
             raise Exception("Не удалось извлечь JSON из ответа")
             
     except Exception as e:
         logger.error(f"❌ Ошибка генерации теста: {e}")
+        # В крайнем случае - запасные вопросы
         return get_fallback_questions(topic, count)
 
-def get_fallback_questions(topic, count):
-    """Запасные вопросы если GigaChat не работает"""
-    fallback_questions = {
+# === ЗАПАСНЫЕ ВОПРОСЫ (НА СЛУЧАЙ ОШИБКИ GIGACHAT) ===
+def get_fallback_questions(topic, count=10):
+    """Запасные вопросы если GigaChat не доступен"""
+    
+    all_questions = {
         "психология": [
-            {
-                "question": "Как часто вы испытываете стресс в повседневной жизни?",
-                "options": {"A": "Постоянно", "B": "Часто", "C": "Иногда", "D": "Редко"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Как вы обычно справляетесь с негативными эмоциями?",
-                "options": {"A": "Подавляю", "B": "Игнорирую", "C": "Обсуждаю", "D": "Анализирую"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Как вы оцениваете свою самооценку?",
-                "options": {"A": "Низкая", "B": "Заниженная", "C": "Адекватная", "D": "Высокая"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Как часто вы чувствуете тревогу без причины?",
-                "options": {"A": "Постоянно", "B": "Часто", "C": "Иногда", "D": "Никогда"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Как вы относитесь к своим ошибкам?",
-                "options": {"A": "Самоедство", "B": "Избегание", "C": "Анализ", "D": "Принятие"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            }
+            {"question": "Как часто вы чувствуете внутреннее напряжение?", "options": {"A": "Постоянно", "B": "Часто", "C": "Иногда", "D": "Редко"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с негативными мыслями?", "options": {"A": "Подавляю", "B": "Игнорирую", "C": "Анализирую", "D": "Трансформирую"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы оцениваете свою самооценку?", "options": {"A": "Занижена", "B": "Нестабильна", "C": "Адекватна", "D": "Здоровая"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как часто вы чувствуете тревогу без причины?", "options": {"A": "Ежедневно", "B": "Часто", "C": "Иногда", "D": "Почти никогда"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы относитесь к своим ошибкам?", "options": {"A": "Критикую себя", "B": "Избегаю вспоминать", "C": "Анализирую", "D": "Учусь"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с эмоциональным выгоранием?", "options": {"A": "Игнорирую", "B": "Терплю", "C": "Отдыхаю", "D": "Меняю подход"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Насколько вы осознаете свои эмоции?", "options": {"A": "Слабо", "B": "Иногда", "C": "Хорошо", "D": "Отлично"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы восстанавливаетесь после стресса?", "options": {"A": "Не восстанавливаюсь", "B": "Медленно", "C": "Быстро", "D": "Эффективно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как часто вы практикуете самонаблюдение?", "options": {"A": "Никогда", "B": "Редко", "C": "Регулярно", "D": "Ежедневно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы относитесь к психотерапии?", "options": {"A": "Отрицательно", "B": "Скептически", "C": "Нейтрально", "D": "Позитивно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}}
         ],
         "отношения": [
-            {
-                "question": "Как вы реагируете на конфликт в отношениях?",
-                "options": {"A": "Агрессивно", "B": "Ухожу от конфликта", "C": "Обсуждаю", "D": "Ищу компромисс"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Как вы выражаете свои чувства партнеру?",
-                "options": {"A": "Не выражаю", "B": "Редко", "C": "Открыто", "D": "Внимательно"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Как вы справляетесь с недопониманием?",
-                "options": {"A": "Ссора", "B": "Молчание", "C": "Объяснение", "D": "Диалог"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Доверяете ли вы своему партнеру?",
-                "options": {"A": "Нет", "B": "Не полностью", "C": "В основном", "D": "Полностью"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Как часто вы проводите время с близкими?",
-                "options": {"A": "Редко", "B": "Иногда", "C": "Часто", "D": "Всегда"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            }
+            {"question": "Как вы решаете конфликты в отношениях?", "options": {"A": "Агрессивно", "B": "Ухожу от конфликта", "C": "Обсуждаю", "D": "Ищу компромисс"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы выражаете любовь и заботу?", "options": {"A": "Не выражаю", "B": "Редко", "C": "Словами", "D": "Действиями"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Насколько вы доверяете близким людям?", "options": {"A": "Не доверяю", "B": "С трудом", "C": "В основном", "D": "Полностью"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как часто вы проводите время с близкими?", "options": {"A": "Редко", "B": "Иногда", "C": "Часто", "D": "Регулярно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с недопониманием?", "options": {"A": "Ссора", "B": "Молчание", "C": "Объяснение", "D": "Диалог"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Насколько вы открыты в отношениях?", "options": {"A": "Закрыт", "B": "Осторожен", "C": "Открыт", "D": "Искренен"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы поддерживаете отношения на расстоянии?", "options": {"A": "Не могу", "B": "С трудом", "C": "Нормально", "D": "Легко"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы показываете благодарность партнеру?", "options": {"A": "Не показываю", "B": "Изредка", "C": "Регулярно", "D": "Всегда"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы реагируете на критику в свой адрес?", "options": {"A": "Защищаюсь", "B": "Обижаюсь", "C": "Слушаю", "D": "Анализирую"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Что для вас главное в отношениях?", "options": {"A": "Стабильность", "B": "Страсть", "C": "Доверие", "D": "Понимание"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}}
         ],
         "карьера": [
-            {
-                "question": "Как вы относитесь к своим профессиональным целям?",
-                "options": {"A": "Нет целей", "B": "Неопределенно", "C": "Планирую", "D": "Активно иду"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            },
-            {
-                "question": "Как вы справляетесь с профессиональным выгоранием?",
-                "options": {"A": "Игнорирую", "B": "Терплю", "C": "Отдыхаю", "D": "Меняю подход"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            }
+            {"question": "Как вы ставите профессиональные цели?", "options": {"A": "Не ставлю", "B": "Планирую смутно", "C": "Конкретно", "D": "Стратегически"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с профессиональными вызовами?", "options": {"A": "Боюсь", "B": "Откладываю", "C": "Решаю", "D": "Использую как рост"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы развиваете свои навыки?", "options": {"A": "Не развиваю", "B": "Пассивно", "C": "Регулярно", "D": "Системно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с синдромом самозванца?", "options": {"A": "Не справляюсь", "B": "С трудом", "C": "Осознаю", "D": "Преодолеваю"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы используете профессиональные неудачи?", "options": {"A": "Ругаю себя", "B": "Забываю", "C": "Анализирую", "D": "Учусь"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы строите профессиональные отношения?", "options": {"A": "Избегаю", "B": "Формально", "C": "Дружелюбно", "D": "Стратегически"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с прокрастинацией?", "options": {"A": "Не справляюсь", "B": "С трудом", "C": "Дисциплинирую", "D": "Использую техники"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы ищете новые возможности?", "options": {"A": "Не ищу", "B": "Пассивно", "C": "Регулярно", "D": "Создаю"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы поддерживаете баланс работа-жизнь?", "options": {"A": "Нет баланса", "B": "С трудом", "C": "Стараюсь", "D": "Эффективно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Что для вас успех в карьере?", "options": {"A": "Деньги", "B": "Статус", "C": "Развитие", "D": "Влияние"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}}
         ],
         "здоровье": [
-            {
-                "question": "Как часто вы заботитесь о своем здоровье?",
-                "options": {"A": "Никогда", "B": "Редко", "C": "Регулярно", "D": "Всегда"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            }
+            {"question": "Как часто вы заботитесь о своем здоровье?", "options": {"A": "Никогда", "B": "Редко", "C": "Регулярно", "D": "Системно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы оцениваете качество своего сна?", "options": {"A": "Плохое", "B": "Удовлетворительное", "C": "Хорошее", "D": "Отличное"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как часто вы занимаетесь физической активностью?", "options": {"A": "Никогда", "B": "Редко", "C": "Регулярно", "D": "Ежедневно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы питаетесь?", "options": {"A": "Бесконтрольно", "B": "Как придется", "C": "Сбалансированно", "D": "Осознанно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь со стрессом?", "options": {"A": "Срываюсь", "B": "Заедаю", "C": "Практикую релаксацию", "D": "Комплексно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как часто вы проходите медицинские проверки?", "options": {"A": "Никогда", "B": "Редко", "C": "Регулярно", "D": "Системно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы отдыхаете и восстанавливаетесь?", "options": {"A": "Не отдыхаю", "B": "Пассивно", "C": "Активно", "D": "Качественно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы относитесь к здоровым привычкам?", "options": {"A": "Игнорирую", "B": "Скептически", "C": "Пробую", "D": "Интегрирую"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы заботитесь о ментальном здоровье?", "options": {"A": "Не забочусь", "B": "Редко", "C": "Регулярно", "D": "Системно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Что для вас важно в здоровом образе жизни?", "options": {"A": "Ничего", "B": "Физическое здоровье", "C": "Ментальное здоровье", "D": "Баланс"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}}
         ],
         "финансы": [
-            {
-                "question": "Как вы относитесь к деньгам?",
-                "options": {"A": "Страх", "B": "Тревога", "C": "Уверенность", "D": "Спокойствие"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            }
+            {"question": "Как вы относитесь к деньгам?", "options": {"A": "Страх", "B": "Тревога", "C": "Уверенность", "D": "Спокойствие"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы планируете свой бюджет?", "options": {"A": "Не планирую", "B": "Стихийно", "C": "Регулярно", "D": "Системно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы относитесь к инвестициям?", "options": {"A": "Боюсь", "B": "Не верю", "C": "Интересуюсь", "D": "Активно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с финансовыми трудностями?", "options": {"A": "Паникую", "B": "Откладываю", "C": "Решаю", "D": "Планирую"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы относитесь к долгам и кредитам?", "options": {"A": "Страх", "B": "Принимаю", "C": "Контролирую", "D": "Избегаю"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы повышаете финансовую грамотность?", "options": {"A": "Не повышаю", "B": "Редко", "C": "Регулярно", "D": "Системно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы ставите финансовые цели?", "options": {"A": "Не ставлю", "B": "Смутно", "C": "Конкретно", "D": "Стратегически"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы относитесь к тратам на саморазвитие?", "options": {"A": "Не трачу", "B": "Экономлю", "C": "Инвестирую", "D": "Приоритет"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с импульсивными покупками?", "options": {"A": "Поддаюсь", "B": "С трудом", "C": "Контролирую", "D": "Осознанно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Что для вас финансовое благополучие?", "options": {"A": "Много денег", "B": "Стабильность", "C": "Свобода", "D": "Безопасность"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}}
         ],
         "личность": [
-            {
-                "question": "Как вы оцениваете свои личностные качества?",
-                "options": {"A": "Критично", "B": "Сомневаюсь", "C": "Объективно", "D": "Позитивно"},
-                "scores": {"A": 0, "B": 1, "C": 2, "D": 3}
-            }
+            {"question": "Как вы оцениваете свои личностные качества?", "options": {"A": "Критично", "B": "Сомневаюсь", "C": "Объективно", "D": "Позитивно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с изменениями в жизни?", "options": {"A": "Боюсь", "B": "Сопротивляюсь", "C": "Принимаю", "D": "Использую"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Насколько вы осознаете свои сильные стороны?", "options": {"A": "Не осознаю", "B": "Слабо", "C": "Хорошо", "D": "Отлично"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы принимаете важные решения?", "options": {"A": "Импульсивно", "B": "С трудом", "C": "Взвешенно", "D": "Стратегически"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы строите отношения с людьми?", "options": {"A": "Сложно", "B": "Сдержанно", "C": "Открыто", "D": "Гармонично"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с ответственностью?", "options": {"A": "Избегаю", "B": "С трудом", "C": "Принимаю", "D": "Ищу"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы видите свое будущее?", "options": {"A": "Негативно", "B": "Неопределенно", "C": "Оптимистично", "D": "Четко"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы относитесь к саморазвитию?", "options": {"A": "Не интересуюсь", "B": "Скептически", "C": "Интересуюсь", "D": "Активно"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Как вы справляетесь с неуверенностью?", "options": {"A": "Сдаюсь", "B": "С трудом", "C": "Преодолеваю", "D": "Расту"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
+            {"question": "Что для вас главное в жизни?", "options": {"A": "Комфорт", "B": "Статус", "C": "Развитие", "D": "Счастье"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}}
         ]
     }
     
-    default = fallback_questions.get(topic, fallback_questions["психология"])
-    while len(default) < count:
-        default.append(default[0].copy())
-    return default[:count]
+    questions = all_questions.get(topic, all_questions["психология"])
+    while len(questions) < count:
+        questions = questions + questions[:count - len(questions)]
+    return questions[:count]
 
 # === АНАЛИЗ РЕЗУЛЬТАТОВ ===
-def analyze_results(topic, answers, scores, total_questions):
-    """Генерирует глубокий анализ от психолога и коуча"""
+def analyze_results(topic, answers, scores, total_questions, is_paid=False):
+    """
+    Генерирует глубокий анализ от психолога и коуча
+    Бесплатный: 700+ знаков
+    Платный: 1400+ знаков
+    """
     try:
-        logger.info(f"Анализирую результаты теста по теме: {topic}")
+        min_length = 1400 if is_paid else 700
+        logger.info(f"Анализирую результаты теста по теме: {topic}, длина: {min_length}+ знаков")
         
         system = """Ты — команда из двух экспертов:
         1. Клинический психолог с 25-летним опытом, доктор наук
@@ -294,7 +318,8 @@ def analyze_results(topic, answers, scores, total_questions):
         
         Вы проводите глубокий анализ результатов психологического теста.
         Ваш анализ должен быть максимально полезным, глубоким и персонализированным.
-        Пишите тепло, профессионально, с примерами и конкретикой."""
+        Пишите тепло, профессионально, с примерами и конкретикой.
+        Используйте эмодзи, переносы строк, структурируйте текст."""
         
         user = f"""Проведи анализ результатов теста по теме "{topic}".
         
@@ -304,33 +329,43 @@ def analyze_results(topic, answers, scores, total_questions):
         Общий балл: {scores} из {total_questions * 3}
         Процент: {int((scores / (total_questions * 3)) * 100)}%
         
-        Напиши развернутый анализ (минимум 700 знаков для бесплатного и 1200 для платного):
+        Напиши развернутый анализ МИНИМУМ на {min_length} знаков:
         
-        1. 🧠 Оценка от клинического психолога:
+        1. 🧠 Оценка от клинического психолога (30% текста):
            - Глубокий анализ личности на основе ответов
            - Выявление сильных сторон и зон роста
-           - Психологический портрет
+           - Психологический портрет с деталями
            - Рекомендации по работе над собой
         
-        2. 💼 Коучинговый разбор от эксперта:
+        2. 💼 Коучинговый разбор от эксперта (30% текста):
            - Оценка потенциала и возможностей
            - Конкретные шаги для развития
            - Мотивационные техники
            - Практические упражнения
         
-        3. 🌟 Интегральный вывод:
+        3. 🌟 Интегральный вывод (40% текста):
            - Общая картина состояния
            - 3 конкретных действия для улучшения
            - Мотивирующая поддержка
+           - Персональный план развития
         
-        Формат: используй эмодзи, переносы строк, структурируй текст.
         Пиши максимально полезно, конкретно и вдохновляюще."""
         
-        response = ask_giga(system, user)
+        response = ask_giga(system, user, max_tokens=4000 if is_paid else 2500)
         
-        if not response or len(response) < 100:
-            raise Exception("Ответ слишком короткий")
-            
+        # Проверяем длину
+        if len(response) < min_length:
+            logger.warning(f"⚠️ Анализ слишком короткий: {len(response)} знаков, нужно {min_length}")
+            # Добавляем расширение
+            extension = f"\n\n💫 Дополнительные рекомендации для вас:\n\n"
+            if scores < total_questions * 3 * 0.4:
+                extension += "Рекомендуем начать с малого: выберите одну область для работы и уделяйте ей 15 минут в день. Помните, что путь к изменениям начинается с первого шага!"
+            elif scores < total_questions * 3 * 0.7:
+                extension += "У вас хороший фундамент! Сфокусируйтесь на системном подходе: ведите дневник прогресса, отмечайте даже маленькие победы."
+            else:
+                extension += "Вы на правильном пути! Продолжайте развиваться и делитесь своим опытом с другими - это усилит ваш рост."
+            response += extension
+        
         return response
         
     except Exception as e:
@@ -344,41 +379,77 @@ def get_fallback_analysis(topic, scores, total_questions):
     
     if percentage >= 70:
         status = "отличное психологическое состояние"
-        recommendation = "рекомендуем поддерживать баланс и заниматься профилактикой"
+        recommendation = "поддерживать баланс и заниматься профилактикой"
         detail = "Вы демонстрируете высокий уровень психологического благополучия и осознанности."
+        emoji = "🌟"
     elif percentage >= 40:
         status = "удовлетворительное состояние с потенциалом для роста"
-        recommendation = "рекомендуем работать над эмоциональным интеллектом и стрессоустойчивостью"
+        recommendation = "работать над эмоциональным интеллектом и стрессоустойчивостью"
         detail = "У вас хороший фундамент, но есть зоны для развития."
+        emoji = "💫"
     else:
         status = "требуется внимание к психологическому состоянию"
-        recommendation = "рекомендуем обратиться к психологу и начать практиковать mindfulness"
+        recommendation = "обратиться к психологу и начать практиковать mindfulness"
         detail = "Важно уделить время себе и своему внутреннему состоянию."
+        emoji = "🌱"
     
-    return f"""🔍 РЕЗУЛЬТАТЫ ТЕСТА
-Тема: {topic.title()}
+    text = f"""🔍 РЕЗУЛЬТАТЫ ТЕСТА
+📌 Тема: {topic.title()}
 
-📊 ВАШ РЕЗУЛЬТАТ: {scores} из {max_score} баллов ({percentage}%)
+{emoji} ВАШ РЕЗУЛЬТАТ: {scores} из {max_score} баллов ({percentage}%)
 
 🧠 АНАЛИЗ КЛИНИЧЕСКОГО ПСИХОЛОГА:
 Ваше состояние характеризуется как {status}.
 {detail}
 {scores} баллов отражают ваш текущий уровень психологического благополучия.
+Важно отметить, что психологическое состояние - это динамичный процесс, и вы можете его улучшать.
 
 💼 РЕКОМЕНДАЦИИ ОТ КОУЧА:
 Для дальнейшего развития {recommendation}.
 Рекомендуем практиковать осознанность и работать над своими целями.
+Установите конкретные задачи на неделю и отслеживайте свой прогресс.
 
 🌟 ПРАКТИЧЕСКИЕ ШАГИ ДЛЯ УЛУЧШЕНИЯ:
-1. Начните вести дневник эмоций (5 минут в день)
+1. Начните вести дневник эмоций (5 минут в день) - это поможет осознавать свои чувства
 2. Практикуйте благодарность — записывайте 3 хороших события каждый день
-3. Найдите время для саморефлексии и отдыха
+3. Найдите время для саморефлексии и отдыха - минимум 15 минут в день
+4. Поставьте одну конкретную цель на месяц и двигайтесь к ней маленькими шагами
 
 💫 ЗАКЛЮЧЕНИЕ:
 Ваш результат показывает, что у вас есть потенциал для роста. 
 Каждый день — это возможность стать лучше. Доверяйте себе и своему пути!
+Помните: изменения начинаются с маленьких шагов, и каждый из них важен.
 
 #саморазвитие #психология #коучинг #жизньплюс"""
+    
+    # Удлиняем если нужно
+    while len(text) < 700:
+        text += "\n\n✨ Помните: каждый день - это новая возможность стать лучше! Вы уникальны и способны на большее!"
+    
+    return text
+
+# === ФУНКЦИЯ ДЛЯ КРАСИВОЙ КАРТИНКИ ===
+def generate_result_image(score, total, topic):
+    """Генерирует эффектную картинку для результата теста"""
+    try:
+        percentage = int((score / total) * 100)
+        
+        if percentage >= 70:
+            prompt = "beautiful sunset motivational success happiness celebration gold"
+        elif percentage >= 40:
+            prompt = "peaceful nature landscape meditation growth green"
+        else:
+            prompt = "motivational sunrise new beginning hope inspiration"
+        
+        url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?width=1080&height=720&nologo=true"
+        img = requests.get(url, timeout=30).content
+        filename = f'/tmp/result_{int(datetime.now().timestamp())}.jpg'
+        with open(filename, 'wb') as f:
+            f.write(img)
+        return filename
+    except Exception as e:
+        logger.error(f"Ошибка генерации картинки результата: {e}")
+        return None
 
 # === ВЕБ-СЕРВЕР ===
 app = Flask(__name__)
@@ -430,7 +501,7 @@ def generate_post(theme):
         - Без Markdown разметки
         - Только текст"""
         
-        text = ask_giga(system, user)
+        text = ask_giga(system, user, max_tokens=1500)
         
         if not text or len(text) < 50:
             raise Exception("GigaChat вернул пустой или короткий ответ")
@@ -531,14 +602,13 @@ scheduler.start()
 logger.info("✅ Планировщик запущен")
 
 # === СОСТОЯНИЯ ПОЛЬЗОВАТЕЛЕЙ ===
-user_test_data = {}  # Хранит сгенерированные вопросы
+user_test_data = {}
 
 # ============================================
 # === ОСНОВНОЕ МЕНЮ С КНОПКАМИ ===
 # ============================================
 
 def get_main_keyboard():
-    """Создает главную клавиатуру с кнопками"""
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         telebot.types.KeyboardButton('🎯 Пройти тест'),
@@ -551,11 +621,10 @@ def get_main_keyboard():
     return markup
 
 def get_test_type_keyboard():
-    """Клавиатура выбора типа теста"""
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
-        telebot.types.KeyboardButton('🧠 Бесплатный тест'),
-        telebot.types.KeyboardButton('💎 Платный тест')
+        telebot.types.KeyboardButton('🧠 Бесплатный тест (10 вопр.)'),
+        telebot.types.KeyboardButton('💎 Платный тест (20 вопр.)')
     )
     markup.add(
         telebot.types.KeyboardButton('🔙 На главную')
@@ -568,7 +637,6 @@ def get_test_type_keyboard():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    """Приветствие и главное меню"""
     welcome_text = (
         "🌟 Добро пожаловать в бота Жизнь+!\n\n"
         "Я создан командой лучших психологов и коучей.\n"
@@ -588,7 +656,6 @@ def start(message):
 
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def show_test_selection(message):
-    """Показывает выбор типа теста"""
     text = (
         "🎯 ВЫБЕРИТЕ ТИП ТЕСТА:\n\n"
         "🧠 Бесплатный тест (10 вопросов)\n"
@@ -597,7 +664,7 @@ def show_test_selection(message):
         "• Рекомендации от психолога\n\n"
         "💎 Платный тест (20 вопросов)\n"
         "• Расширенная диагностика\n"
-        "• Глубокий анализ (1200+ знаков)\n"
+        "• Глубокий анализ (1400+ знаков)\n"
         "• Персональные рекомендации\n"
         "• План развития\n\n"
         "Выберите вариант ниже:"
@@ -609,22 +676,18 @@ def show_test_selection(message):
         reply_markup=get_test_type_keyboard()
     )
 
-@bot.message_handler(func=lambda m: m.text == '🧠 Бесплатный тест')
+@bot.message_handler(func=lambda m: m.text == '🧠 Бесплатный тест (10 вопр.)')
 def start_free_test(message):
-    """Начинает бесплатный тест с выбором темы"""
     show_topic_selection(message, "free", 10)
 
-@bot.message_handler(func=lambda m: m.text == '💎 Платный тест')
+@bot.message_handler(func=lambda m: m.text == '💎 Платный тест (20 вопр.)')
 def start_paid_test(message):
-    """Начинает платный тест с выбором темы"""
     show_topic_selection(message, "paid", 20)
 
 def show_topic_selection(message, test_type, count):
-    """Показывает выбор темы для теста"""
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     
     for topic, description in TEST_TOPICS.items():
-        # Берем только первую часть описания для кнопки
         short_desc = description.split(',')[0] if ',' in description else description
         markup.add(telebot.types.InlineKeyboardButton(
             f"{short_desc}", 
@@ -636,30 +699,27 @@ def show_topic_selection(message, test_type, count):
     bot.send_message(
         message.chat.id,
         f"🎯 Выберите тему теста:\n\n"
-        f"Каждая тема содержит уникальные вопросы, созданные искусственным интеллектом.\n\n"
+        f"Каждый раз генерируются НОВЫЕ уникальные вопросы!\n\n"
         f"📊 {count} вопросов + развернутый анализ от экспертов",
         reply_markup=markup
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('topic_'))
 def handle_topic_selection(call):
-    """Обрабатывает выбор темы"""
     try:
         parts = call.data.split('_')
         test_type = parts[1]
         topic = parts[2]
         count = int(parts[3]) if len(parts) > 3 else 10
         
-        # Отправляем уведомление
         bot.edit_message_text(
-            f"🔄 Генерирую тест по теме «{topic.title()}»...\n"
+            f"🔄 Генерирую НОВЫЙ тест по теме «{topic.title()}»...\n"
             f"Это может занять несколько секунд.\n"
             f"Пожалуйста, подождите...",
             call.message.chat.id,
             call.message.message_id
         )
         
-        # Генерируем вопросы
         questions = generate_test_questions(topic, count)
         
         if not questions or len(questions) < count:
@@ -670,7 +730,6 @@ def handle_topic_selection(call):
             )
             return
         
-        # Сохраняем тест
         test_id = f"temp_{int(time.time())}_{call.message.chat.id}"
         user_test_data[call.message.chat.id] = {
             'test_id': test_id,
@@ -680,10 +739,10 @@ def handle_topic_selection(call):
             'answers': [],
             'current_q': 0,
             'scores': [],
-            'total_questions': len(questions)
+            'total_questions': len(questions),
+            'is_paid': test_type == 'paid'
         }
         
-        # Отправляем первый вопрос
         bot.delete_message(call.message.chat.id, call.message.message_id)
         send_question(call.message.chat.id)
         
@@ -696,7 +755,6 @@ def handle_topic_selection(call):
         )
 
 def send_question(chat_id):
-    """Отправляет текущий вопрос"""
     state = user_test_data.get(chat_id)
     if not state:
         bot.send_message(
@@ -719,7 +777,6 @@ def send_question(chat_id):
     for option, text in q['options'].items():
         markup.add(f"{option}) {text}")
     
-    # Кнопка для прерывания теста
     markup.add(telebot.types.KeyboardButton('⏹ Прервать тест'))
     
     bot.send_message(
@@ -732,7 +789,6 @@ def send_question(chat_id):
 
 @bot.message_handler(func=lambda m: m.text == '⏹ Прервать тест')
 def cancel_test(message):
-    """Прерывает текущий тест"""
     chat_id = message.chat.id
     if chat_id in user_test_data:
         del user_test_data[chat_id]
@@ -751,7 +807,6 @@ def cancel_test(message):
 
 @bot.message_handler(func=lambda m: m.text and any(m.text.startswith(f"{x})") for x in 'ABCD'))
 def handle_answer(message):
-    """Обрабатывает ответ пользователя"""
     chat_id = message.chat.id
     state = user_test_data.get(chat_id)
     
@@ -763,13 +818,11 @@ def handle_answer(message):
         )
         return
     
-    # Проверяем, что это ответ на текущий вопрос
     current_q = state['current_q']
     if current_q >= len(state['questions']):
         finish_test(chat_id)
         return
     
-    # Сохраняем ответ
     letter = message.text[0]
     question = state['questions'][current_q]
     
@@ -777,40 +830,38 @@ def handle_answer(message):
     state['scores'].append(question['scores'][letter])
     state['current_q'] += 1
     
-    # Отправляем следующий вопрос или завершаем
     if state['current_q'] >= len(state['questions']):
         finish_test(chat_id)
     else:
         send_question(chat_id)
 
 def finish_test(chat_id):
-    """Завершает тест и отправляет результат"""
     state = user_test_data.get(chat_id)
     if not state:
         return
     
-    # Рассчитываем результат
     total_score = sum(state['scores'])
     max_score = len(state['questions']) * 3
     answers_str = ', '.join(state['answers'])
+    is_paid = state.get('is_paid', False)
     
-    # Показываем промежуточный результат
     bot.send_message(
         chat_id,
         f"📊 Тест завершен!\n\n"
         f"✅ Вы ответили на {len(state['questions'])} вопросов\n"
         f"📊 Ваш результат: {total_score} из {max_score}\n\n"
-        f"⏳ Генерирую подробный анализ от экспертов...\n"
+        f"⏳ Генерирую глубокий анализ от экспертов...\n"
         f"Это займет до 30 секунд. Пожалуйста, подождите!"
     )
     
-    # Генерируем анализ
     try:
+        # Генерируем анализ с нужной длиной
         analysis = analyze_results(
             state['topic'],
             answers_str,
             total_score,
-            len(state['questions'])
+            len(state['questions']),
+            is_paid
         )
         
         # Сохраняем в базу
@@ -821,22 +872,32 @@ def finish_test(chat_id):
                    state['topic'], analysis, datetime.now().isoformat()))
         conn.commit()
         
-        # Отправляем результат
-        message_text = f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}"
+        # Генерируем картинку
+        img_path = generate_result_image(total_score, max_score, state['topic'])
         
-        # Разбиваем на части если длинный
-        if len(message_text) > 4096:
-            parts = [message_text[i:i+4096] for i in range(0, len(message_text), 4096)]
-            for i, part in enumerate(parts):
-                if i == 0:
+        result_text = f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}"
+        
+        # Отправляем с картинкой
+        if img_path and os.path.exists(img_path):
+            caption = f"🌟 Ваш результат: {total_score} из {max_score}\n📌 Тема: {state['topic'].title()}"
+            with open(img_path, 'rb') as photo:
+                bot.send_photo(chat_id, photo, caption=caption)
+            os.remove(img_path)
+            
+            if len(result_text) > 4096:
+                parts = [result_text[i:i+4096] for i in range(0, len(result_text), 4096)]
+                for part in parts:
                     bot.send_message(chat_id, part)
-                else:
-                    time.sleep(0.5)
-                    bot.send_message(chat_id, part)
+            else:
+                bot.send_message(chat_id, result_text)
         else:
-            bot.send_message(chat_id, message_text)
+            if len(result_text) > 4096:
+                parts = [result_text[i:i+4096] for i in range(0, len(result_text), 4096)]
+                for part in parts:
+                    bot.send_message(chat_id, part)
+            else:
+                bot.send_message(chat_id, result_text)
         
-        # Отправляем финальную клавиатуру
         markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         markup.add(
             telebot.types.KeyboardButton('🎯 Пройти тест'),
@@ -863,7 +924,6 @@ def finish_test(chat_id):
             reply_markup=get_main_keyboard()
         )
     
-    # Очищаем состояние
     if chat_id in user_test_data:
         del user_test_data[chat_id]
 
@@ -873,7 +933,6 @@ def finish_test(chat_id):
 
 @bot.message_handler(func=lambda m: m.text == '📊 Мои результаты')
 def show_results(message):
-    """Показывает историю результатов пользователя"""
     c.execute("""SELECT topic, total_score, created_at 
                  FROM user_results 
                  WHERE user_id = ? 
@@ -907,10 +966,10 @@ def show_results(message):
 
 @bot.message_handler(func=lambda m: m.text == '📋 О тестах')
 def about_tests(message):
-    """Информация о тестах"""
     text = (
         "📋 ЧТО ТАКОЕ ТЕСТЫ ЖИЗНЬ+?\n\n"
-        "Это уникальные психологические тесты, созданные с помощью искусственного интеллекта на основе методик лучших психологов.\n\n"
+        "Это уникальные психологические тесты, созданные с помощью искусственного интеллекта.\n"
+        "Каждый раз генерируются НОВЫЕ вопросы!\n\n"
         "🔹 Как это работает:\n"
         "1. Вы выбираете тему теста\n"
         "2. Отвечаете на вопросы (10 или 20)\n"
@@ -918,6 +977,9 @@ def about_tests(message):
         "🔹 Кто анализирует результаты:\n"
         "🧠 Клинический психолог — оценивает ваше состояние\n"
         "💼 Коуч — дает практические рекомендации\n\n"
+        "🔹 Объем анализа:\n"
+        "• Бесплатный тест: 700+ знаков\n"
+        "• Платный тест: 1400+ знаков\n\n"
         "🔹 Темы тестов:\n"
         "• Психология — ваше эмоциональное состояние\n"
         "• Отношения — любовь, дружба, семья\n"
@@ -936,7 +998,6 @@ def about_tests(message):
 
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
-    """Информация о канале"""
     text = (
         "❤️ О КАНАЛЕ ЖИЗНЬ+\n\n"
         "Это канал о психологии, саморазвитии и счастливой жизни.\n\n"
@@ -968,18 +1029,15 @@ def about_channel(message):
 
 @bot.message_handler(func=lambda m: m.text == '🔙 На главную')
 def back_to_main(message):
-    """Возврат на главную"""
     start(message)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'go_to_test')
 def callback_go_to_test(call):
-    """Обработчик кнопки перехода к тесту"""
     bot.delete_message(call.message.chat.id, call.message.message_id)
     show_test_selection(call.message)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'cancel')
 def callback_cancel(call):
-    """Отмена выбора темы"""
     bot.delete_message(call.message.chat.id, call.message.message_id)
     bot.send_message(
         call.message.chat.id,
@@ -997,7 +1055,6 @@ def manual_post(message):
 
 @bot.message_handler(commands=['testpost'])
 def test_post(message):
-    """Тестовая отправка для диагностики"""
     msg = bot.send_message(message.chat.id, "🔍 Проверяю настройки...")
     
     try:
