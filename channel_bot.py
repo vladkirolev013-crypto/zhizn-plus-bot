@@ -11,9 +11,8 @@ import base64
 import urllib3
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask
+from flask import Flask, request
 
-# Отключаем предупреждения SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === НАСТРОЙКИ ===
@@ -21,11 +20,12 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', '8799965983:AAFE5b7noB3TKth3ubn-Hk0OwWQp
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID', '019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET', '7b92ff4b-a058-4d3e-a1a7-d8cba1a5d661')
+WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://zhizn-plus-bot.onrender.com')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# === GIGACHAT ПРЯМЫЕ ЗАПРОСЫ (ИСПРАВЛЕНО ДЛЯ 415) ===
+# === GIGACHAT ===
 def get_giga_token():
     try:
         auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
@@ -35,7 +35,6 @@ def get_giga_token():
             'RqUID': str(uuid.uuid4()),
             'Content-Type': 'application/json'
         }
-        # ИСПРАВЛЕНО: используем data=json.dumps() вместо json=
         response = requests.post(
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
@@ -45,7 +44,7 @@ def get_giga_token():
         )
         if response.status_code == 200:
             return response.json()['access_token']
-        logger.error(f"Ошибка токена: {response.status_code} | {response.text}")
+        logger.error(f"Ошибка токена: {response.status_code}")
         return None
     except Exception as e:
         logger.error(f"Ошибка получения токена: {e}")
@@ -70,7 +69,6 @@ def ask_giga(system_prompt, user_prompt):
         "max_tokens": 1000
     }
     
-    # ИСПРАВЛЕНО: используем data=json.dumps() вместо json=
     response = requests.post(
         'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
         headers=headers,
@@ -82,13 +80,10 @@ def ask_giga(system_prompt, user_prompt):
     if response.status_code == 200:
         return response.json()['choices'][0]['message']['content']
     else:
-        raise Exception(f"Ошибка GigaChat: {response.status_code} | {response.text}")
+        raise Exception(f"Ошибка GigaChat: {response.status_code}")
 
-# === TELEGRAM BOT ===
-bot = telebot.TeleBot(BOT_TOKEN)
-
-# Сбрасываем вебхук при запуске, чтобы избежать 409
-telebot.apihelper.delete_webhook(BOT_TOKEN)
+# === TELEGRAM BOT (WEBHOOK РЕЖИМ) ===
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
 # === БАЗА ДАННЫХ ===
 DB_PATH = 'channel.db'
@@ -100,17 +95,25 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_results (id INTEGER PRIMARY KEY AUT
 conn.commit()
 user_state = {}
 
-# === ВЕБ-СЕРВЕР ДЛЯ RENDER ===
+# === FLASK ВЕБ-СЕРВЕР + WEBHOOK ===
 app = Flask(__name__)
-@app.route('/')
+
+@app.route('/', methods=['GET'])
 def home():
     return "Бот жизнь+ работает!"
 
-def run_flask():
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+def webhook():
+    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+    bot.process_new_updates([update])
+    return '', 200
 
-threading.Thread(target=run_flask, daemon=True).start()
+@app.route('/set-webhook', methods=['GET'])
+def set_webhook():
+    bot.remove_webhook()
+    time.sleep(1)
+    bot.set_webhook(url=f'{WEBHOOK_URL}/{BOT_TOKEN}')
+    return 'Webhook установлен!', 200
 
 # === ФУНКЦИИ ===
 def generate_post(theme):
@@ -221,9 +224,11 @@ def finish_test(chat_id):
     bot.send_message(chat_id, f"Результат:\n\nБаллы: {score}/30\n\n{result}")
     del user_state[chat_id]
 
+# === ЗАПУСК ===
 if __name__ == '__main__':
     logger.info("=" * 50)
-    logger.info("БОТ ЗАПУЩЕН!")
+    logger.info("БОТ ЗАПУЩЕН В WEBHOOK РЕЖИМЕ!")
     logger.info("=" * 50)
-    # Используем infinity_polling для стабильности
-    bot.infinity_polling(timeout=10, long_polling_timeout=10)
+    
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
