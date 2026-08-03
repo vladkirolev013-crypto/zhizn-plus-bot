@@ -8,14 +8,12 @@ import logging
 import threading
 import uuid
 import base64
-import traceback
 import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 import urllib3
 
-# ОТКЛЮЧАЕМ ПРЕДУПРЕЖДЕНИЯ SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================
@@ -52,14 +50,14 @@ def get_giga_token():
         headers = {
             'Authorization': f'Basic {base64_auth}',
             'RqUID': str(uuid.uuid4()),
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded'
         }
         response = requests.post(
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
-            json={"scope": "GIGACHAT_API_PERS"},
+            data='scope=GIGACHAT_API_PERS',
             timeout=15,
-            verify=False  # <--- ОТКЛЮЧАЕМ SSL
+            verify=False
         )
         
         logger.info(f"✅ Токен-сервер ответил: {response.status_code}")
@@ -108,21 +106,18 @@ def ask_giga(system, user, max_tokens=2500):
             headers=headers,
             json=payload,
             timeout=30,
-            verify=False  # <--- ОТКЛЮЧАЕМ SSL
+            verify=False
         )
         
         logger.info(f"✅ GigaChat ответил: {response.status_code}")
         
         if response.status_code != 200:
             logger.error(f"❌ Ошибка GigaChat: {response.status_code}")
-            logger.error(f"❌ Текст ошибки: {response.text[:500]}")
+            logger.error(f"❌ Текст: {response.text[:500]}")
             return None
         
         return response.json()['choices'][0]['message']['content']
         
-    except requests.exceptions.Timeout:
-        logger.error("❌ Таймаут GigaChat (30 секунд)")
-        return None
     except Exception as e:
         logger.error(f"❌ Ошибка GigaChat: {e}")
         return None
@@ -158,7 +153,7 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# ГЕНЕРАЦИЯ — ТОЛЬКО GIGACHAT
+# ГЕНЕРАЦИЯ
 # ============================================
 def generate_test_questions(topic, count=10):
     system = "Ты — психолог. Составь вопросы для теста. Формат: JSON."
@@ -255,9 +250,6 @@ def start(message):
                 pass
     bot.send_message(message.chat.id, "🌟 Жизнь+", reply_markup=main_menu())
 
-# ============================================
-# КНОПКИ
-# ============================================
 @bot.message_handler(func=lambda m: m.text == '🎯 Тест')
 def choose_test(m):
     bot.send_message(m.chat.id, "Выберите тип:", reply_markup=test_menu())
@@ -287,9 +279,6 @@ def channel(m):
 def back(m):
     bot.send_message(m.chat.id, "Главное меню", reply_markup=main_menu())
 
-# ============================================
-# ВЫБОР ТЕМЫ
-# ============================================
 def show_topics(m, ttype, count):
     mk = telebot.types.InlineKeyboardMarkup(row_width=2)
     for t, desc in TEST_TOPICS.items():
@@ -319,9 +308,6 @@ def cancel_cb(c):
     bot.delete_message(c.message.chat.id, c.message.message_id)
     bot.send_message(c.message.chat.id, "Отменено", reply_markup=main_menu())
 
-# ============================================
-# ПРОХОЖДЕНИЕ ТЕСТА
-# ============================================
 def send_q(chat_id):
     s = sessions.get(chat_id)
     if not s:
@@ -358,9 +344,6 @@ def answer(m):
     s['q'] += 1
     send_q(m.chat.id)
 
-# ============================================
-# ЗАВЕРШЕНИЕ
-# ============================================
 def finish(chat_id):
     s = sessions.get(chat_id)
     if not s:
