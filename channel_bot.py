@@ -8,9 +8,13 @@ import logging
 import threading
 import uuid
 import base64
+import urllib3
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
+
+# Отключаем предупреждения SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8799965983:AAGGPCxN1XvrGnmy2INgEneFkLlKU7oRSe4')
@@ -21,7 +25,7 @@ GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET', '7b92ff4b-a058-4d3e-a1
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# === GIGACHAT ПРЯМЫЕ ЗАПРОСЫ (без библиотеки) ===
+# === GIGACHAT ПРЯМЫЕ ЗАПРОСЫ ===
 def get_giga_token():
     try:
         auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
@@ -35,6 +39,7 @@ def get_giga_token():
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
             json={"scope": "GIGACHAT_API_PERS"},
+            verify=False,
             timeout=15
         )
         if response.status_code == 200:
@@ -68,6 +73,7 @@ def ask_giga(system_prompt, user_prompt):
         'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
         headers=headers,
         json=payload,
+        verify=False,
         timeout=30
     )
     
