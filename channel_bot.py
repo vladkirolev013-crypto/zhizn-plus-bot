@@ -11,7 +11,7 @@ import base64
 import urllib3
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask, request
+from flask import Flask
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -20,7 +20,6 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', '8799965983:AAFE5b7noB3TKth3ubn-Hk0OwWQp
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID', '019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET', '7b92ff4b-a058-4d3e-a1a7-d8cba1a5d661')
-WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://zhizn-plus-bot.onrender.com')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -82,8 +81,8 @@ def ask_giga(system_prompt, user_prompt):
     else:
         raise Exception(f"Ошибка GigaChat: {response.status_code}")
 
-# === TELEGRAM BOT (WEBHOOK РЕЖИМ) ===
-bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+# === TELEGRAM BOT ===
+bot = telebot.TeleBot(BOT_TOKEN)
 
 # === БАЗА ДАННЫХ ===
 DB_PATH = 'channel.db'
@@ -95,25 +94,17 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_results (id INTEGER PRIMARY KEY AUT
 conn.commit()
 user_state = {}
 
-# === FLASK ВЕБ-СЕРВЕР + WEBHOOK ===
+# === ВЕБ-СЕРВЕР ДЛЯ RENDER (чтобы не засыпал) ===
 app = Flask(__name__)
-
-@app.route('/', methods=['GET'])
+@app.route('/')
 def home():
     return "Бот жизнь+ работает!"
 
-@app.route(f'/{BOT_TOKEN}', methods=['POST'])
-def webhook():
-    update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
-    bot.process_new_updates([update])
-    return '', 200
+def run_flask():
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
 
-@app.route('/set-webhook', methods=['GET'])
-def set_webhook():
-    bot.remove_webhook()
-    time.sleep(1)
-    bot.set_webhook(url=f'{WEBHOOK_URL}/{BOT_TOKEN}')
-    return 'Webhook установлен!', 200
+threading.Thread(target=run_flask, daemon=True).start()
 
 # === ФУНКЦИИ ===
 def generate_post(theme):
@@ -170,9 +161,15 @@ def start(message):
 
 @bot.message_handler(commands=['post'])
 def manual_post(message):
-    bot.send_message(message.chat.id, "Запрашиваю пост...")
-    if post_to_channel("утренняя мотивация"):
-        bot.send_message(message.chat.id, "✅ Отправлено!")
+    try:
+        bot.send_message(message.chat.id, "Запрашиваю пост...")
+        if post_to_channel("утренняя мотивация"):
+            bot.send_message(message.chat.id, "✅ Отправлено!")
+        else:
+            bot.send_message(message.chat.id, "❌ Ошибка отправки")
+    except Exception as e:
+        logger.error(f"Ошибка в /post: {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)}")
 
 @bot.message_handler(func=lambda m: m.text == 'Бесплатный тест (10 вопросов)')
 def free_test(message):
@@ -220,15 +217,20 @@ def finish_test(chat_id):
               (chat_id, state['test_id'], json.dumps(state['answers']), state.get('total_score', 0), datetime.now().isoformat()))
     conn.commit()
     score = state.get('total_score', 0)
-    result = "🎉 Отлично!" if score <= 10 else "😊 Нормально!" if score <= 20 else "💪 Отдохни!"
+    result = " Отлично!" if score <= 10 else "😊 Нормально!" if score <= 20 else "💪 Отдохни!"
     bot.send_message(chat_id, f"Результат:\n\nБаллы: {score}/30\n\n{result}")
     del user_state[chat_id]
 
 # === ЗАПУСК ===
 if __name__ == '__main__':
     logger.info("=" * 50)
-    logger.info("БОТ ЗАПУЩЕН В WEBHOOK РЕЖИМЕ!")
+    logger.info("БОТ ЗАПУЩЕН!")
     logger.info("=" * 50)
     
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # Сбрасываем webhook если был установлен
+    try:
+        bot.remove_webhook()
+    except:
+        pass
+    
+    bot.infinity_polling(timeout=10, long_polling_timeout=10)
