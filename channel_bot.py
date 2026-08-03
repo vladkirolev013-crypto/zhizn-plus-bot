@@ -13,7 +13,6 @@ import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
-from PIL import Image, ImageDraw, ImageFont
 
 # ============================================
 # НАСТРОЙКИ
@@ -28,41 +27,59 @@ ADMIN_IDS = [8746212340]
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не установлен!")
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ============================================
-# GIGACHAT — ТОЛЬКО ЗДЕСЬ, БЕЗ FALLBACK
+# GIGACHAT
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
 def get_giga_token():
+    logger.info("🔄 Запрашиваю токен GigaChat...")
+    
     if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
+        logger.info("✅ Токен из кеша")
         return giga_token_cache["token"]
     
-    auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
-    base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
-    headers = {
-        'Authorization': f'Basic {base64_auth}',
-        'RqUID': str(uuid.uuid4()),
-        'Content-Type': 'application/json'
-    }
-    response = requests.post(
-        'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
-        headers=headers,
-        json={"scope": "GIGACHAT_API_PERS"},
-        timeout=15
-    )
-    if response.status_code != 200:
+    try:
+        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
+        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+        headers = {
+            'Authorization': f'Basic {base64_auth}',
+            'RqUID': str(uuid.uuid4()),
+            'Content-Type': 'application/json'
+        }
+        response = requests.post(
+            'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
+            headers=headers,
+            json={"scope": "GIGACHAT_API_PERS"},
+            timeout=15
+        )
+        
+        logger.info(f"✅ Токен-сервер ответил: {response.status_code}")
+        
+        if response.status_code != 200:
+            logger.error(f"❌ Ошибка токена: {response.status_code}")
+            logger.error(f"❌ Текст: {response.text[:200]}")
+            return None
+            
+        token = response.json()['access_token']
+        giga_token_cache["token"] = token
+        giga_token_cache["expires"] = time.time() + 3500
+        logger.info("✅ Токен получен")
+        return token
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения токена: {e}")
         return None
-    token = response.json()['access_token']
-    giga_token_cache["token"] = token
-    giga_token_cache["expires"] = time.time() + 3500
-    return token
 
 def ask_giga(system, user, max_tokens=2500):
+    logger.info("🔄 Отправляю запрос в GigaChat...")
+    
     token = get_giga_token()
     if not token:
+        logger.error("❌ Не удалось получить токен GigaChat")
         return None
     
     headers = {
@@ -79,17 +96,30 @@ def ask_giga(system, user, max_tokens=2500):
         "max_tokens": max_tokens
     }
     
-    response = requests.post(
-        'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
-        headers=headers,
-        json=payload,
-        timeout=60
-    )
-    
-    if response.status_code != 200:
+    try:
+        logger.info("📤 Отправляю POST в GigaChat...")
+        response = requests.post(
+            'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        logger.info(f"✅ GigaChat ответил: {response.status_code}")
+        
+        if response.status_code != 200:
+            logger.error(f"❌ Ошибка GigaChat: {response.status_code}")
+            logger.error(f"❌ Текст ошибки: {response.text[:500]}")
+            return None
+        
+        return response.json()['choices'][0]['message']['content']
+        
+    except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут GigaChat (30 секунд)")
         return None
-    
-    return response.json()['choices'][0]['message']['content']
+    except Exception as e:
+        logger.error(f"❌ Ошибка GigaChat: {e}")
+        return None
 
 # ============================================
 # TELEGRAM БОТ
@@ -158,40 +188,6 @@ def generate_post(theme):
     if len(response) < 700:
         return None
     return response
-
-# ============================================
-# КАРТИНКИ
-# ============================================
-def generate_result_image(score, total, topic):
-    try:
-        pct = int((score / total) * 100) if total > 0 else 0
-        prompt = "sunset" if pct >= 70 else "nature" if pct >= 40 else "sunrise"
-        url = f"https://image.pollinations.ai/prompt/{prompt}?width=1080&height=720&nologo=true"
-        img = requests.get(url, timeout=30).content
-        filename = f'/tmp/result_{int(time.time())}.jpg'
-        with open(filename, 'wb') as f:
-            f.write(img)
-        return filename
-    except:
-        return None
-
-def generate_certificate(name, topic, score, total):
-    try:
-        img = Image.new('RGB', (1200, 800), 'white')
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
-        except:
-            font = ImageFont.load_default()
-        draw.text((600, 100), "СЕРТИФИКАТ", fill=(0,0,0), font=font, anchor="mt")
-        draw.text((600, 200), f"{name}", fill=(0,0,0), font=font, anchor="mt")
-        draw.text((600, 300), f"Тема: {topic}", fill=(0,0,0), font=font, anchor="mt")
-        draw.text((600, 400), f"Результат: {score} из {total*3}", fill=(0,0,0), font=font, anchor="mt")
-        filename = f'/tmp/cert_{int(time.time())}.png'
-        img.save(filename)
-        return filename
-    except:
-        return None
 
 # ============================================
 # ВЕБ-СЕРВЕР
@@ -377,18 +373,6 @@ def finish(chat_id):
         del sessions[chat_id]
         return
     
-    cert = generate_certificate("Пользователь", s['topic'], score, len(s['questions']))
-    if cert:
-        with open(cert, 'rb') as f:
-            bot.send_document(chat_id, f, caption="🏆 Сертификат")
-        os.remove(cert)
-    
-    img = generate_result_image(score, len(s['questions'])*3, s['topic'])
-    if img:
-        with open(img, 'rb') as f:
-            bot.send_photo(chat_id, f, caption=f"🌟 {score}/{len(s['questions'])*3}")
-        os.remove(img)
-    
     bot.send_message(chat_id, f"🔍 {analysis}")
     del sessions[chat_id]
     bot.send_message(chat_id, "✨ Готово!", reply_markup=main_menu())
@@ -454,10 +438,11 @@ scheduler.add_job(schedule_morning, 'cron', hour=8, minute=0)
 scheduler.add_job(schedule_daily, 'cron', hour=10, minute=0)
 scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
 scheduler.start()
+logger.info("✅ Планировщик запущен")
 
 # ============================================
 # ЗАПУСК
 # ============================================
 if __name__ == '__main__':
-    print("🚀 БОТ ЗАПУЩЕН")
+    logger.info("🚀 БОТ ЗАПУЩЕН")
     bot.polling(none_stop=True)
