@@ -13,6 +13,8 @@ import random
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
+from PIL import Image, ImageDraw, ImageFont
+import io
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -60,7 +62,6 @@ def get_giga_token():
         return None
 
 def ask_giga(system_prompt, user_prompt, max_tokens=2000):
-    """Запрос к GigaChat с возможностью увеличить токены"""
     token = get_giga_token()
     if not token:
         raise Exception("Не удалось получить токен GigaChat")
@@ -116,6 +117,10 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_results
               user_id INTEGER, test_id TEXT, answers TEXT, 
               total_score INTEGER, topic TEXT, ai_analysis TEXT, created_at TEXT)''')
 
+c.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+              topic TEXT, questions TEXT, created_at TEXT)''')
+
 conn.commit()
 
 # === ТЕМЫ ТЕСТОВ ===
@@ -128,12 +133,11 @@ TEST_TOPICS = {
     "личность": "🌟 Характер, темперамент, личностные качества"
 }
 
-# === ГЕНЕРАЦИЯ ТЕСТА ЧЕРЕЗ GIGACHAT (ВСЕГДА НОВЫЙ) ===
+# === АДМИНЫ ===
+ADMIN_IDS = [int(os.environ.get('ADMIN_ID', 0))]
+
+# === ГЕНЕРАЦИЯ ТЕСТА ЧЕРЕЗ GIGACHAT ===
 def generate_test_questions(topic, count=10):
-    """
-    Генерирует УНИКАЛЬНЫЕ вопросы для теста через GigaChat.
-    Каждый раз - новые вопросы!
-    """
     try:
         logger.info(f"🔄 Генерирую НОВЫЙ тест по теме: {topic}, {count} вопросов")
         
@@ -178,7 +182,6 @@ def generate_test_questions(topic, count=10):
         
         response = ask_giga(system, user, max_tokens=3000)
         
-        # Извлекаем JSON из ответа
         start = response.find('{')
         end = response.rfind('}') + 1
         if start != -1 and end != -1:
@@ -187,7 +190,6 @@ def generate_test_questions(topic, count=10):
             questions = data.get('questions', [])
             
             if len(questions) >= count:
-                # Проверяем уникальность
                 unique = []
                 seen = set()
                 for q in questions:
@@ -201,12 +203,10 @@ def generate_test_questions(topic, count=10):
                     return unique[:count]
                 else:
                     logger.warning(f"⚠️ Только {len(unique)} уникальных, нужно {count}")
-                    # Добираем запасными
                     fallback = get_fallback_questions(topic, count - len(unique))
                     return unique + fallback
             else:
                 logger.warning(f"⚠️ Получено {len(questions)} вопросов, нужно {count}")
-                # Добираем запасными
                 fallback = get_fallback_questions(topic, count - len(questions))
                 return questions + fallback
         else:
@@ -214,13 +214,9 @@ def generate_test_questions(topic, count=10):
             
     except Exception as e:
         logger.error(f"❌ Ошибка генерации теста: {e}")
-        # В крайнем случае - запасные вопросы
         return get_fallback_questions(topic, count)
 
-# === ЗАПАСНЫЕ ВОПРОСЫ (НА СЛУЧАЙ ОШИБКИ GIGACHAT) ===
 def get_fallback_questions(topic, count=10):
-    """Запасные вопросы если GigaChat не доступен"""
-    
     all_questions = {
         "психология": [
             {"question": "Как часто вы чувствуете внутреннее напряжение?", "options": {"A": "Постоянно", "B": "Часто", "C": "Иногда", "D": "Редко"}, "scores": {"A": 0, "B": 1, "C": 2, "D": 3}},
@@ -301,13 +297,87 @@ def get_fallback_questions(topic, count=10):
         questions = questions + questions[:count - len(questions)]
     return questions[:count]
 
+# === ГЕНЕРАЦИЯ СЕРТИФИКАТА ===
+def generate_certificate(user_name, topic, score, total_questions):
+    """Создает красивый сертификат с фоном на тему теста"""
+    try:
+        # Создаем изображение
+        img = Image.new('RGB', (1200, 800), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # Выбираем фон в зависимости от темы
+        backgrounds = {
+            "психология": (200, 230, 255),
+            "отношения": (255, 200, 220),
+            "карьера": (200, 255, 220),
+            "здоровье": (220, 255, 200),
+            "финансы": (255, 220, 200),
+            "личность": (230, 200, 255)
+        }
+        
+        bg_color = backgrounds.get(topic, (200, 230, 255))
+        
+        # Рисуем градиентный фон
+        for i in range(800):
+            r = int(bg_color[0] * (1 - i/1600) + 255 * (i/1600))
+            g = int(bg_color[1] * (1 - i/1600) + 215 * (i/1600))
+            b = int(bg_color[2] * (1 - i/1600) + 200 * (i/1600))
+            draw.line([(0, i), (1200, i)], fill=(r, g, b), width=1)
+        
+        # Рамка
+        draw.rectangle([(20, 20), (1180, 780)], outline=(100, 100, 100), width=3)
+        
+        # Заголовок
+        title = "СЕРТИФИКАТ О ПРОХОЖДЕНИИ"
+        draw.text((600, 80), title, fill=(50, 50, 150), font=None, anchor="mt")
+        
+        # Имя пользователя
+        name_text = f"🌟 {user_name} 🌟"
+        draw.text((600, 200), name_text, fill=(50, 50, 150), font=None, anchor="mt")
+        
+        # Текст сертификата
+        draw.text((600, 280), "успешно прошел(ла) тест", fill=(80, 80, 80), font=None, anchor="mt")
+        
+        # Тема
+        topic_text = f"📌 {topic.upper()}"
+        draw.text((600, 350), topic_text, fill=(100, 50, 150), font=None, anchor="mt")
+        
+        # Результат
+        result_text = f"Результат: {score} из {total_questions * 3} баллов"
+        draw.text((600, 430), result_text, fill=(50, 50, 50), font=None, anchor="mt")
+        
+        # Процент
+        percentage = int((score / (total_questions * 3)) * 100)
+        if percentage >= 70:
+            emoji = "🌟"
+            status = "Отличный результат!"
+        elif percentage >= 40:
+            emoji = "💫"
+            status = "Хороший результат!"
+        else:
+            emoji = "🌱"
+            status = "Есть к чему стремиться!"
+        
+        draw.text((600, 490), f"{emoji} {status}", fill=(50, 50, 150), font=None, anchor="mt")
+        
+        # Дата
+        date_text = f"📅 {datetime.now().strftime('%d.%m.%Y')}"
+        draw.text((600, 580), date_text, fill=(100, 100, 100), font=None, anchor="mt")
+        
+        # Подпись
+        draw.text((600, 670), "Жизнь+ | Психология и саморазвитие", fill=(80, 80, 80), font=None, anchor="mt")
+        
+        # Сохраняем
+        filename = f'/tmp/certificate_{int(time.time())}.png'
+        img.save(filename)
+        return filename
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации сертификата: {e}")
+        return None
+
 # === АНАЛИЗ РЕЗУЛЬТАТОВ ===
 def analyze_results(topic, answers, scores, total_questions, is_paid=False):
-    """
-    Генерирует глубокий анализ от психолога и коуча
-    Бесплатный: 700+ знаков
-    Платный: 1400+ знаков
-    """
     try:
         min_length = 1400 if is_paid else 700
         logger.info(f"Анализирую результаты теста по теме: {topic}, длина: {min_length}+ знаков")
@@ -331,32 +401,29 @@ def analyze_results(topic, answers, scores, total_questions, is_paid=False):
         
         Напиши развернутый анализ МИНИМУМ на {min_length} знаков:
         
-        1. 🧠 Оценка от клинического психолога (30% текста):
+        1. 🧠 Оценка от клинического психолога:
            - Глубокий анализ личности на основе ответов
            - Выявление сильных сторон и зон роста
            - Психологический портрет с деталями
            - Рекомендации по работе над собой
         
-        2. 💼 Коучинговый разбор от эксперта (30% текста):
+        2. 💼 Коучинговый разбор от эксперта:
            - Оценка потенциала и возможностей
            - Конкретные шаги для развития
            - Мотивационные техники
            - Практические упражнения
         
-        3. 🌟 Интегральный вывод (40% текста):
+        3. 🌟 Интегральный вывод:
            - Общая картина состояния
            - 3 конкретных действия для улучшения
            - Мотивирующая поддержка
-           - Персональный план развития
         
         Пиши максимально полезно, конкретно и вдохновляюще."""
         
         response = ask_giga(system, user, max_tokens=4000 if is_paid else 2500)
         
-        # Проверяем длину
         if len(response) < min_length:
             logger.warning(f"⚠️ Анализ слишком короткий: {len(response)} знаков, нужно {min_length}")
-            # Добавляем расширение
             extension = f"\n\n💫 Дополнительные рекомендации для вас:\n\n"
             if scores < total_questions * 3 * 0.4:
                 extension += "Рекомендуем начать с малого: выберите одну область для работы и уделяйте ей 15 минут в день. Помните, что путь к изменениям начинается с первого шага!"
@@ -373,7 +440,6 @@ def analyze_results(topic, answers, scores, total_questions, is_paid=False):
         return get_fallback_analysis(topic, scores, total_questions)
 
 def get_fallback_analysis(topic, scores, total_questions):
-    """Запасной анализ если GigaChat не работает"""
     max_score = total_questions * 3
     percentage = int((scores / max_score) * 100)
     
@@ -402,35 +468,29 @@ def get_fallback_analysis(topic, scores, total_questions):
 Ваше состояние характеризуется как {status}.
 {detail}
 {scores} баллов отражают ваш текущий уровень психологического благополучия.
-Важно отметить, что психологическое состояние - это динамичный процесс, и вы можете его улучшать.
 
 💼 РЕКОМЕНДАЦИИ ОТ КОУЧА:
 Для дальнейшего развития {recommendation}.
 Рекомендуем практиковать осознанность и работать над своими целями.
-Установите конкретные задачи на неделю и отслеживайте свой прогресс.
 
 🌟 ПРАКТИЧЕСКИЕ ШАГИ ДЛЯ УЛУЧШЕНИЯ:
-1. Начните вести дневник эмоций (5 минут в день) - это поможет осознавать свои чувства
+1. Начните вести дневник эмоций (5 минут в день)
 2. Практикуйте благодарность — записывайте 3 хороших события каждый день
-3. Найдите время для саморефлексии и отдыха - минимум 15 минут в день
-4. Поставьте одну конкретную цель на месяц и двигайтесь к ней маленькими шагами
+3. Найдите время для саморефлексии и отдыха
 
 💫 ЗАКЛЮЧЕНИЕ:
 Ваш результат показывает, что у вас есть потенциал для роста. 
 Каждый день — это возможность стать лучше. Доверяйте себе и своему пути!
-Помните: изменения начинаются с маленьких шагов, и каждый из них важен.
 
 #саморазвитие #психология #коучинг #жизньплюс"""
     
-    # Удлиняем если нужно
     while len(text) < 700:
-        text += "\n\n✨ Помните: каждый день - это новая возможность стать лучше! Вы уникальны и способны на большее!"
+        text += "\n\n✨ Помните: каждый день - это новая возможность стать лучше!"
     
     return text
 
-# === ФУНКЦИЯ ДЛЯ КРАСИВОЙ КАРТИНКИ ===
+# === ГЕНЕРАЦИЯ КАРТИНКИ РЕЗУЛЬТАТА ===
 def generate_result_image(score, total, topic):
-    """Генерирует эффектную картинку для результата теста"""
     try:
         percentage = int((score / total) * 100)
         
@@ -443,7 +503,7 @@ def generate_result_image(score, total, topic):
         
         url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?width=1080&height=720&nologo=true"
         img = requests.get(url, timeout=30).content
-        filename = f'/tmp/result_{int(datetime.now().timestamp())}.jpg'
+        filename = f'/tmp/result_{int(time.time())}.jpg'
         with open(filename, 'wb') as f:
             f.write(img)
         return filename
@@ -583,31 +643,204 @@ def post_to_channel(theme):
         logger.error(traceback.format_exc())
         return False
 
-# === ПЛАНИРОВЩИК ===
-scheduler = BackgroundScheduler()
+# === ЕЖЕДНЕВНЫЙ ТЕСТ В КАНАЛЕ ===
+def post_daily_test():
+    """Отправляет в канал пост с кнопкой для перехода к тесту"""
+    try:
+        # Выбираем случайную тему
+        topics = list(TEST_TOPICS.keys())
+        random.shuffle(topics)
+        
+        for topic in topics:
+            try:
+                # Генерируем вопросы для теста
+                questions = generate_test_questions(topic, 10)
+                
+                if not questions:
+                    continue
+                
+                # Сохраняем тест в базу
+                questions_json = json.dumps(questions)
+                c.execute("INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
+                          (topic, questions_json, datetime.now().isoformat()))
+                conn.commit()
+                
+                # Получаем ID теста
+                test_id = c.lastrowid
+                
+                # Формируем пост
+                post_text = (
+                    f"🧠 **ЕЖЕДНЕВНЫЙ ТЕСТ ДНЯ!**\n\n"
+                    f"📌 Тема: **{topic.title()}**\n"
+                    f"📊 Вопросов: 10\n\n"
+                    f"Проверьте себя прямо сейчас!\n"
+                    f"Нажмите кнопку ниже, чтобы пройти тест в боте."
+                )
+                
+                # Создаем кнопку для перехода в бота с параметром
+                bot_username = bot.get_me().username
+                markup = telebot.types.InlineKeyboardMarkup()
+                markup.add(telebot.types.InlineKeyboardButton(
+                    "🎯 Пройти тест в боте",
+                    url=f"https://t.me/{bot_username}?start=daily_{topic}_{test_id}"
+                ))
+                
+                bot.send_message(
+                    CHANNEL_ID,
+                    post_text,
+                    reply_markup=markup,
+                    parse_mode='Markdown'
+                )
+                
+                logger.info(f"✅ Ежедневный тест отправлен в канал: {topic}")
+                time.sleep(2)  # Пауза между постами
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка отправки теста по теме {topic}: {e}")
+                continue
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки ежедневных тестов: {e}")
+        return False
 
-def post_morning():
-    post_to_channel("утренняя мотивация")
+# === ОБРАБОТЧИК START С ПАРАМЕТРАМИ ===
+@bot.message_handler(commands=['start'])
+def handle_start(message):
+    """Обрабатывает /start с параметрами (при переходе из канала)"""
+    chat_id = message.chat.id
+    
+    # Проверяем есть ли параметр
+    if message.text and ' ' in message.text:
+        param = message.text.split(' ', 1)[1]
+        
+        if param.startswith('daily_'):
+            try:
+                # Извлекаем тему и ID теста
+                parts = param.split('_')
+                if len(parts) >= 3:
+                    topic = parts[1]
+                    test_id = int(parts[2])
+                    
+                    # Проверяем что тема существует
+                    if topic in TEST_TOPICS:
+                        # Достаем тест из базы
+                        c.execute("SELECT questions FROM daily_tests WHERE id = ?", (test_id,))
+                        row = c.fetchone()
+                        
+                        if row:
+                            questions = json.loads(row[0])
+                            
+                            # Запускаем тест
+                            bot.send_message(
+                                chat_id,
+                                f"🧠 Вы перешли по ежедневному тесту!\n"
+                                f"📌 Тема: {topic.title()}\n"
+                                f"Начинаем тест прямо сейчас!"
+                            )
+                            
+                            # Сохраняем тест
+                            user_test_data[chat_id] = {
+                                'test_id': f"daily_{test_id}",
+                                'topic': topic,
+                                'type': 'free',
+                                'questions': questions,
+                                'answers': [],
+                                'current_q': 0,
+                                'scores': [],
+                                'total_questions': len(questions),
+                                'is_paid': False,
+                                'is_daily': True
+                            }
+                            
+                            send_question(chat_id)
+                            return
+                        else:
+                            bot.send_message(chat_id, "❌ Тест не найден. Попробуйте начать новый.")
+                            start(message)
+                            return
+            except Exception as e:
+                logger.error(f"❌ Ошибка обработки daily параметра: {e}")
+                bot.send_message(chat_id, "❌ Произошла ошибка. Попробуйте снова.")
+                start(message)
+                return
+    
+    # Если нет параметра или ошибка - показываем главное меню
+    start(message)
 
-def post_relationship():
-    post_to_channel("психология отношений")
+def start(message):
+    """Главное меню"""
+    welcome_text = (
+        "🌟 Добро пожаловать в бота Жизнь+!\n\n"
+        "Я создан командой лучших психологов и коучей.\n"
+        "Здесь вы можете:\n"
+        "✅ Пройти глубокие психологические тесты\n"
+        "✅ Получить развернутый анализ от экспертов\n"
+        "✅ Узнать больше о себе\n"
+        "✅ Получить практические рекомендации\n\n"
+        "👉 Нажмите кнопку «🎯 Пройти тест», чтобы начать!"
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        welcome_text,
+        reply_markup=get_main_keyboard()
+    )
 
-def post_success():
-    post_to_channel("финансы и успех")
+def start_test_with_topic(chat_id, topic, test_type, count):
+    """Запускает тест по конкретной теме"""
+    try:
+        questions = generate_test_questions(topic, count)
+        
+        if not questions:
+            bot.send_message(chat_id, "❌ Не удалось сгенерировать тест. Попробуйте позже.")
+            return
+        
+        test_id = f"temp_{int(time.time())}_{chat_id}"
+        user_test_data[chat_id] = {
+            'test_id': test_id,
+            'topic': topic,
+            'type': test_type,
+            'questions': questions,
+            'answers': [],
+            'current_q': 0,
+            'scores': [],
+            'total_questions': len(questions),
+            'is_paid': test_type == 'paid',
+            'is_daily': False
+        }
+        
+        send_question(chat_id)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска теста: {e}")
+        bot.send_message(chat_id, "❌ Произошла ошибка. Попробуйте снова.")
 
-scheduler.add_job(post_morning, 'cron', hour=8, minute=0)
-scheduler.add_job(post_relationship, 'cron', hour=13, minute=0)
-scheduler.add_job(post_success, 'cron', hour=19, minute=0)
-scheduler.start()
-logger.info("✅ Планировщик запущен")
+# === КНОПКА В КАНАЛЕ ДЛЯ ПЕРЕХОДА ===
+@bot.message_handler(commands=['testlink'])
+def send_test_link(message):
+    """Отправляет ссылки для ежедневных тестов (только для админа)"""
+    if message.chat.id in ADMIN_IDS:
+        topics = list(TEST_TOPICS.keys())
+        text = "📋 Ссылки для ежедневных тестов:\n\n"
+        bot_username = bot.get_me().username
+        for topic in topics:
+            text += f"📌 {topic.title()}: `https://t.me/{bot_username}?start=daily_{topic}_ID`\n"
+        text += "\nВместо ID подставьте ID теста из базы"
+        bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
-# === СОСТОЯНИЯ ПОЛЬЗОВАТЕЛЕЙ ===
-user_test_data = {}
+@bot.message_handler(commands=['daily'])
+def manual_daily_test(message):
+    """Ручной запуск ежедневного теста (только для админа)"""
+    if message.chat.id in ADMIN_IDS:
+        bot.send_message(message.chat.id, "📤 Отправляю ежедневные тесты в канал...")
+        if post_daily_test():
+            bot.send_message(message.chat.id, "✅ Ежедневные тесты отправлены в канал!")
+        else:
+            bot.send_message(message.chat.id, "❌ Ошибка отправки. Проверьте логи.")
 
-# ============================================
-# === ОСНОВНОЕ МЕНЮ С КНОПКАМИ ===
-# ============================================
-
+# === ОСНОВНОЕ МЕНЮ ===
 def get_main_keyboard():
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -631,29 +864,7 @@ def get_test_type_keyboard():
     )
     return markup
 
-# ============================================
-# === КОМАНДЫ И ОБРАБОТЧИКИ ===
-# ============================================
-
-@bot.message_handler(commands=['start'])
-def start(message):
-    welcome_text = (
-        "🌟 Добро пожаловать в бота Жизнь+!\n\n"
-        "Я создан командой лучших психологов и коучей.\n"
-        "Здесь вы можете:\n"
-        "✅ Пройти глубокие психологические тесты\n"
-        "✅ Получить развернутый анализ от экспертов\n"
-        "✅ Узнать больше о себе\n"
-        "✅ Получить практические рекомендации\n\n"
-        "👉 Нажмите кнопку «🎯 Пройти тест», чтобы начать!"
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        welcome_text,
-        reply_markup=get_main_keyboard()
-    )
-
+# === КОМАНДЫ БОТА ===
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def show_test_selection(message):
     text = (
@@ -740,7 +951,8 @@ def handle_topic_selection(call):
             'current_q': 0,
             'scores': [],
             'total_questions': len(questions),
-            'is_paid': test_type == 'paid'
+            'is_paid': test_type == 'paid',
+            'is_daily': False
         }
         
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -855,7 +1067,6 @@ def finish_test(chat_id):
     )
     
     try:
-        # Генерируем анализ с нужной длиной
         analysis = analyze_results(
             state['topic'],
             answers_str,
@@ -864,7 +1075,6 @@ def finish_test(chat_id):
             is_paid
         )
         
-        # Сохраняем в базу
         c.execute("""INSERT INTO user_results 
                      (user_id, test_id, answers, total_score, topic, ai_analysis, created_at) 
                      VALUES (?,?,?,?,?,?,?)""",
@@ -872,12 +1082,23 @@ def finish_test(chat_id):
                    state['topic'], analysis, datetime.now().isoformat()))
         conn.commit()
         
-        # Генерируем картинку
+        # Генерируем сертификат
+        try:
+            user_name = bot.get_chat(chat_id).first_name or "Пользователь"
+            cert_path = generate_certificate(user_name, state['topic'], total_score, len(state['questions']))
+            
+            if cert_path and os.path.exists(cert_path):
+                with open(cert_path, 'rb') as cert:
+                    bot.send_document(chat_id, cert, caption="🏆 Ваш сертификат о прохождении теста!")
+                os.remove(cert_path)
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки сертификата: {e}")
+        
+        # Генерируем картинку результата
         img_path = generate_result_image(total_score, max_score, state['topic'])
         
         result_text = f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}"
         
-        # Отправляем с картинкой
         if img_path and os.path.exists(img_path):
             caption = f"🌟 Ваш результат: {total_score} из {max_score}\n📌 Тема: {state['topic'].title()}"
             with open(img_path, 'rb') as photo:
@@ -927,10 +1148,7 @@ def finish_test(chat_id):
     if chat_id in user_test_data:
         del user_test_data[chat_id]
 
-# ============================================
 # === ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ ===
-# ============================================
-
 @bot.message_handler(func=lambda m: m.text == '📊 Мои результаты')
 def show_results(message):
     c.execute("""SELECT topic, total_score, created_at 
@@ -1047,48 +1265,71 @@ def callback_cancel(call):
 
 @bot.message_handler(commands=['post'])
 def manual_post(message):
-    bot.send_message(message.chat.id, "📤 Запрашиваю пост...")
-    if post_to_channel("утренняя мотивация"):
-        bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
-    else:
-        bot.send_message(message.chat.id, "❌ Ошибка отправки. Проверьте логи.")
+    if message.chat.id in ADMIN_IDS:
+        bot.send_message(message.chat.id, "📤 Запрашиваю пост...")
+        if post_to_channel("утренняя мотивация"):
+            bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
+        else:
+            bot.send_message(message.chat.id, "❌ Ошибка отправки. Проверьте логи.")
 
 @bot.message_handler(commands=['testpost'])
 def test_post(message):
-    msg = bot.send_message(message.chat.id, "🔍 Проверяю настройки...")
-    
-    try:
-        bot_info = bot.get_chat_member(CHANNEL_ID, bot.get_me().id)
-        status = bot_info.status
-        can_post = getattr(bot_info, 'can_post_messages', 'неизвестно')
-        bot.edit_message_text(
-            f"✅ Бот в канале: {CHANNEL_ID}\n"
-            f"Статус: {status}\n"
-            f"Может постить: {can_post}",
-            message.chat.id, msg.message_id
-        )
-    except Exception as e:
-        bot.edit_message_text(
-            f"❌ Бот НЕ в канале!\n"
-            f"Ошибка: {e}\n\n"
-            f"Добавьте бота в канал {CHANNEL_ID}",
-            message.chat.id, msg.message_id
-        )
-        return
-    
-    try:
-        bot.send_message(CHANNEL_ID, "🧪 Тестовое сообщение от бота")
-        bot.edit_message_text(
-            "✅ Тестовое сообщение отправлено!\n"
-            "Проверьте канал.",
-            message.chat.id, msg.message_id
-        )
-    except Exception as e:
-        bot.edit_message_text(
-            f"❌ Не могу отправить сообщение!\n"
-            f"Ошибка: {e}",
-            message.chat.id, msg.message_id
-        )
+    if message.chat.id in ADMIN_IDS:
+        msg = bot.send_message(message.chat.id, "🔍 Проверяю настройки...")
+        
+        try:
+            bot_info = bot.get_chat_member(CHANNEL_ID, bot.get_me().id)
+            status = bot_info.status
+            can_post = getattr(bot_info, 'can_post_messages', 'неизвестно')
+            bot.edit_message_text(
+                f"✅ Бот в канале: {CHANNEL_ID}\n"
+                f"Статус: {status}\n"
+                f"Может постить: {can_post}",
+                message.chat.id, msg.message_id
+            )
+        except Exception as e:
+            bot.edit_message_text(
+                f"❌ Бот НЕ в канале!\n"
+                f"Ошибка: {e}\n\n"
+                f"Добавьте бота в канал {CHANNEL_ID}",
+                message.chat.id, msg.message_id
+            )
+            return
+        
+        try:
+            bot.send_message(CHANNEL_ID, "🧪 Тестовое сообщение от бота")
+            bot.edit_message_text(
+                "✅ Тестовое сообщение отправлено!\n"
+                "Проверьте канал.",
+                message.chat.id, msg.message_id
+            )
+        except Exception as e:
+            bot.edit_message_text(
+                f"❌ Не могу отправить сообщение!\n"
+                f"Ошибка: {e}",
+                message.chat.id, msg.message_id
+            )
+
+# === ПЛАНИРОВЩИК ===
+scheduler = BackgroundScheduler()
+
+def post_morning():
+    post_to_channel("утренняя мотивация")
+
+def post_daily_test_job():
+    post_daily_test()
+
+def post_success():
+    post_to_channel("финансы и успех")
+
+scheduler.add_job(post_morning, 'cron', hour=8, minute=0)
+scheduler.add_job(post_daily_test_job, 'cron', hour=10, minute=0)  # В 10:00 ежедневные тесты
+scheduler.add_job(post_success, 'cron', hour=19, minute=0)
+scheduler.start()
+logger.info("✅ Планировщик запущен")
+
+# === СОСТОЯНИЯ ПОЛЬЗОВАТЕЛЕЙ ===
+user_test_data = {}
 
 # === ЗАПУСК БОТА ===
 if __name__ == '__main__':
