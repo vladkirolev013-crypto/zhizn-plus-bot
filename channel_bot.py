@@ -13,16 +13,18 @@ import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
+# ============================================
 # === НАСТРОЙКИ ===
+# ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
 
 # === АДМИНЫ ===
-ADMIN_IDS = [8746212340]  # Твой ID
+ADMIN_IDS = [8746212340]
 
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не установлен!")
@@ -30,10 +32,13 @@ if not BOT_TOKEN:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# === GIGACHAT С КЕШИРОВАНИЕМ ===
+# ============================================
+# === GIGACHAT ===
+# ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
 def get_giga_token():
+    """Получает токен GigaChat с кешированием"""
     if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
         return giga_token_cache["token"]
     
@@ -64,6 +69,7 @@ def get_giga_token():
         return None
 
 def ask_giga(system_prompt, user_prompt, max_tokens=2000):
+    """Запрос к GigaChat"""
     token = get_giga_token()
     if not token:
         raise Exception("Не удалось получить токен GigaChat")
@@ -102,26 +108,28 @@ def safe_ask_giga(system_prompt, user_prompt, chat_id=None):
         error_msg = f"❌ GigaChat не отвечает: {str(e)[:200]}"
         logger.error(error_msg)
         
-        # Сообщаем пользователю
         if chat_id:
             try:
                 bot.send_message(chat_id, "❌ Сервис временно недоступен. Попробуйте позже.")
             except:
                 pass
         
-        # Сообщаем админу
         for admin_id in ADMIN_IDS:
             try:
-                bot.send_message(admin_id, f"❗ ОШИБКА GigaChat:\n{error_msg}\n\nПроверьте настройки!")
+                bot.send_message(admin_id, f"❗ ОШИБКА GigaChat:\n{error_msg}")
             except:
                 pass
         
         return None
 
+# ============================================
 # === TELEGRAM БОТ ===
+# ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# === БАЗА ДАННЫХ (ТОЛЬКО ДЛЯ ЕЖЕДНЕВНЫХ ТЕСТОВ) ===
+# ============================================
+# === БАЗА ДАННЫХ ===
+# ============================================
 DB_PATH = 'channel.db'
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
@@ -134,7 +142,9 @@ c.execute('''CREATE TABLE IF NOT EXISTS daily_tests
               created_at TEXT)''')
 conn.commit()
 
+# ============================================
 # === ТЕМЫ ТЕСТОВ ===
+# ============================================
 TEST_TOPICS = {
     "психология": "🧠 Психологическое состояние",
     "отношения": "💕 Любовь и дружба",
@@ -144,7 +154,9 @@ TEST_TOPICS = {
     "личность": "🌟 Характер и самооценка"
 }
 
-# === ГЕНЕРАЦИЯ ТЕСТА ЧЕРЕЗ GIGACHAT ===
+# ============================================
+# === ГЕНЕРАЦИЯ ТЕСТА ===
+# ============================================
 def generate_test_questions(topic, count=10, chat_id=None):
     """Генерирует вопросы через GigaChat"""
     system = """Ты — профессиональный психолог с 20-летним опытом.
@@ -178,41 +190,47 @@ def generate_test_questions(topic, count=10, chat_id=None):
     Верни ТОЛЬКО JSON, без лишнего текста."""
     
     response = safe_ask_giga(system, user, chat_id)
-    
     if not response:
         return None
     
     try:
         start = response.find('{')
         end = response.rfind('}') + 1
-        if start != -1 and end != -1:
-            data = json.loads(response[start:end])
-            questions = data.get('questions', [])
-            
-            # Проверяем уникальность
-            unique = []
-            seen = set()
-            for q in questions:
-                q_text = q.get('question', '')
-                if q_text not in seen:
-                    seen.add(q_text)
-                    unique.append(q)
-            
-            if len(unique) >= count:
-                random.shuffle(unique)
-                return unique[:count]
-            else:
-                return None
-        else:
+        if start == -1 or end == -1:
             return None
+        
+        data = json.loads(response[start:end])
+        questions = data.get('questions', [])
+        
+        if len(questions) < count:
+            return None
+        
+        # Проверяем уникальность
+        unique = []
+        seen = set()
+        for q in questions:
+            q_text = q.get('question', '')
+            if q_text and q_text not in seen:
+                seen.add(q_text)
+                unique.append(q)
+        
+        if len(unique) >= count:
+            random.shuffle(unique)
+            return unique[:count]
+        
+        return None
     except:
         return None
 
-# === ГЕНЕРАЦИЯ АНАЛИЗА ЧЕРЕЗ GIGACHAT ===
+# ============================================
+# === ГЕНЕРАЦИЯ АНАЛИЗА ===
+# ============================================
 def generate_analysis(topic, answers_str, total_score, total_questions, is_paid=False, chat_id=None):
     """Генерирует анализ через GigaChat"""
-    min_length = 1400 if is_paid else 700
     max_score = total_questions * 3
+    if max_score == 0:
+        return None
+    
     percentage = int((total_score / max_score) * 100)
     
     if percentage >= 70:
@@ -224,6 +242,8 @@ def generate_analysis(topic, answers_str, total_score, total_questions, is_paid=
     else:
         level = "начальный"
         rec_count = 6
+    
+    min_length = 1400 if is_paid else 700
     
     system = """Ты — команда из двух экспертов:
     1. Клинический психолог с 25-летним опытом
@@ -259,7 +279,6 @@ def generate_analysis(topic, answers_str, total_score, total_questions, is_paid=
     ВСЁ ТОЛЬКО НА РУССКОМ ЯЗЫКЕ!"""
     
     response = safe_ask_giga(system, user, chat_id)
-    
     if not response:
         return None
     
@@ -274,7 +293,9 @@ def generate_analysis(topic, answers_str, total_score, total_questions, is_paid=
     
     return response
 
-# === ГЕНЕРАЦИЯ ПОСТА ЧЕРЕЗ GIGACHAT ===
+# ============================================
+# === ГЕНЕРАЦИЯ ПОСТА ===
+# ============================================
 def generate_post(theme, chat_id=None):
     """Генерирует пост через GigaChat (1000+ знаков)"""
     system = """Ты — позитивный психолог и мотивационный спикер.
@@ -295,73 +316,23 @@ def generate_post(theme, chat_id=None):
     ОБЩАЯ ДЛИНА: 1000-1300 знаков"""
     
     response = safe_ask_giga(system, user, chat_id)
-    
     if not response:
         return None
     
-    # Проверяем длину
     if len(response) < 800:
         response += f"\n\n💫 Помните: каждый день — это новая возможность стать лучше!"
     
     return response
 
-# === ГЕНЕРАЦИЯ СЕРТИФИКАТА ===
-def generate_certificate(user_name, topic, score, total_questions):
-    try:
-        img = Image.new('RGB', (1200, 800), color='white')
-        draw = ImageDraw.Draw(img)
-        
-        backgrounds = {
-            "психология": (200, 230, 255),
-            "отношения": (255, 200, 220),
-            "карьера": (200, 255, 220),
-            "здоровье": (220, 255, 200),
-            "финансы": (255, 220, 200),
-            "личность": (230, 200, 255)
-        }
-        
-        bg_color = backgrounds.get(topic, (200, 230, 255))
-        
-        for i in range(800):
-            r = int(bg_color[0] * (1 - i/1600) + 255 * (i/1600))
-            g = int(bg_color[1] * (1 - i/1600) + 215 * (i/1600))
-            b = int(bg_color[2] * (1 - i/1600) + 200 * (i/1600))
-            draw.line([(0, i), (1200, i)], fill=(r, g, b), width=1)
-        
-        draw.rectangle([(20, 20), (1180, 780)], outline=(100, 100, 100), width=3)
-        
-        draw.text((600, 80), "СЕРТИФИКАТ О ПРОХОЖДЕНИИ", fill=(50, 50, 150), anchor="mt")
-        draw.text((600, 200), f"🌟 {user_name} 🌟", fill=(50, 50, 150), anchor="mt")
-        draw.text((600, 280), "успешно прошел(ла) тест", fill=(80, 80, 80), anchor="mt")
-        draw.text((600, 350), f"📌 {topic.upper()}", fill=(100, 50, 150), anchor="mt")
-        draw.text((600, 430), f"Результат: {score} из {total_questions * 3} баллов", fill=(50, 50, 50), anchor="mt")
-        
-        percentage = int((score / (total_questions * 3)) * 100)
-        if percentage >= 70:
-            emoji = "🌟"
-            status = "Отличный результат!"
-        elif percentage >= 40:
-            emoji = "💫"
-            status = "Хороший результат!"
-        else:
-            emoji = "🌱"
-            status = "Есть к чему стремиться!"
-        
-        draw.text((600, 490), f"{emoji} {status}", fill=(50, 50, 150), anchor="mt")
-        draw.text((600, 580), f"📅 {datetime.now().strftime('%d.%m.%Y')}", fill=(100, 100, 100), anchor="mt")
-        draw.text((600, 670), "Жизнь+ | Психология и саморазвитие", fill=(80, 80, 80), anchor="mt")
-        
-        filename = f'/tmp/certificate_{int(time.time())}.png'
-        img.save(filename)
-        return filename
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка генерации сертификата: {e}")
-        return None
-
-# === ГЕНЕРАЦИЯ КАРТИНКИ РЕЗУЛЬТАТА ===
+# ============================================
+# === ГЕНЕРАЦИЯ КАРТИНКИ ===
+# ============================================
 def generate_result_image(score, total, topic):
+    """Генерирует картинку результата"""
     try:
+        if total == 0:
+            return None
+        
         percentage = int((score / total) * 100)
         
         if percentage >= 70:
@@ -381,7 +352,94 @@ def generate_result_image(score, total, topic):
         logger.error(f"Ошибка картинки: {e}")
         return None
 
+# ============================================
+# === ГЕНЕРАЦИЯ СЕРТИФИКАТА ===
+# ============================================
+def generate_certificate(user_name, topic, score, total_questions):
+    """Генерирует сертификат"""
+    try:
+        img = Image.new('RGB', (1200, 800), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # Пытаемся загрузить шрифт
+        try:
+            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
+            font_text = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
+        except:
+            font_title = ImageFont.load_default()
+            font_text = ImageFont.load_default()
+        
+        backgrounds = {
+            "психология": (200, 230, 255),
+            "отношения": (255, 200, 220),
+            "карьера": (200, 255, 220),
+            "здоровье": (220, 255, 200),
+            "финансы": (255, 220, 200),
+            "личность": (230, 200, 255)
+        }
+        
+        bg_color = backgrounds.get(topic, (200, 230, 255))
+        
+        # Градиент
+        for i in range(800):
+            r = int(bg_color[0] * (1 - i/1600) + 255 * (i/1600))
+            g = int(bg_color[1] * (1 - i/1600) + 215 * (i/1600))
+            b = int(bg_color[2] * (1 - i/1600) + 200 * (i/1600))
+            draw.line([(0, i), (1200, i)], fill=(r, g, b), width=1)
+        
+        # Рамка
+        draw.rectangle([(20, 20), (1180, 780)], outline=(100, 100, 100), width=3)
+        
+        # Текст
+        draw.text((600, 80), "СЕРТИФИКАТ О ПРОХОЖДЕНИИ", fill=(50, 50, 150), font=font_title, anchor="mt")
+        draw.text((600, 200), f"🌟 {user_name} 🌟", fill=(50, 50, 150), font=font_title, anchor="mt")
+        draw.text((600, 280), "успешно прошел(ла) тест", fill=(80, 80, 80), font=font_text, anchor="mt")
+        draw.text((600, 350), f"📌 {topic.upper()}", fill=(100, 50, 150), font=font_title, anchor="mt")
+        
+        max_score = total_questions * 3
+        draw.text((600, 430), f"Результат: {score} из {max_score} баллов", fill=(50, 50, 50), font=font_text, anchor="mt")
+        
+        if max_score > 0:
+            percentage = int((score / max_score) * 100)
+            if percentage >= 70:
+                emoji = "🌟"
+                status = "Отличный результат!"
+            elif percentage >= 40:
+                emoji = "💫"
+                status = "Хороший результат!"
+            else:
+                emoji = "🌱"
+                status = "Есть к чему стремиться!"
+            
+            draw.text((600, 490), f"{emoji} {status}", fill=(50, 50, 150), font=font_title, anchor="mt")
+        
+        draw.text((600, 580), f"📅 {datetime.now().strftime('%d.%m.%Y')}", fill=(100, 100, 100), font=font_text, anchor="mt")
+        draw.text((600, 670), "Жизнь+ | Психология и саморазвитие", fill=(80, 80, 80), font=font_text, anchor="mt")
+        
+        filename = f'/tmp/certificate_{int(time.time())}.png'
+        img.save(filename)
+        return filename
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации сертификата: {e}")
+        return None
+
+# ============================================
+# === УДАЛЕНИЕ СТАРЫХ ТЕСТОВ ===
+# ============================================
+def cleanup_old_daily_tests():
+    """Удаляет тесты старше 24 часов"""
+    try:
+        cutoff = (datetime.now() - timedelta(days=1)).isoformat()
+        c.execute("DELETE FROM daily_tests WHERE created_at < ?", (cutoff,))
+        conn.commit()
+        logger.info("🧹 Старые ежедневные тесты удалены")
+    except Exception as e:
+        logger.error(f"Ошибка очистки: {e}")
+
+# ============================================
 # === ВЕБ-СЕРВЕР ===
+# ============================================
 app = Flask(__name__)
 
 @app.route('/')
@@ -398,7 +456,9 @@ def run_flask():
 
 threading.Thread(target=run_flask, daemon=True).start()
 
-# === ПРОВЕРКА ПРАВ БОТА ===
+# ============================================
+# === ПРОВЕРКА ПРАВ ===
+# ============================================
 def check_bot_in_channel():
     try:
         bot_id = bot.get_me().id
@@ -409,7 +469,9 @@ def check_bot_in_channel():
         logger.error(f"❌ Ошибка проверки прав: {e}")
         return False
 
+# ============================================
 # === ОТПРАВКА ПОСТА ===
+# ============================================
 def post_to_channel(theme):
     try:
         logger.info(f"📝 ОТПРАВКА ПОСТА: {theme}")
@@ -419,7 +481,6 @@ def post_to_channel(theme):
             return False
         
         text = generate_post(theme, ADMIN_IDS[0])
-        
         if not text:
             bot.send_message(ADMIN_IDS[0], f"❌ Не удалось сгенерировать пост на тему: {theme}")
             return False
@@ -441,7 +502,9 @@ def post_to_channel(theme):
         logger.error(f"❌ Ошибка: {e}")
         return False
 
-# === ЕЖЕДНЕВНЫЙ ТЕСТ ===
+# ============================================
+# === ЕЖЕДНЕВНЫЕ ТЕСТЫ ===
+# ============================================
 def post_daily_test():
     try:
         logger.info("📤 Начинаю отправку ежедневных тестов")
@@ -491,6 +554,9 @@ def post_daily_test():
                 logger.error(f"❌ Ошибка по теме {topic}: {e}")
                 continue
         
+        # Удаляем старые тесты
+        cleanup_old_daily_tests()
+        
         logger.info(f"📊 Отправлено {sent_count} тестов")
         return sent_count > 0
         
@@ -498,15 +564,16 @@ def post_daily_test():
         logger.error(f"❌ Критическая ошибка: {e}")
         return False
 
+# ============================================
 # === МЕНЮ ===
+# ============================================
 def get_main_keyboard():
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         telebot.types.KeyboardButton('🎯 Пройти тест'),
-        telebot.types.KeyboardButton('📊 Мои результаты')
+        telebot.types.KeyboardButton('📋 О тестах')
     )
     markup.add(
-        telebot.types.KeyboardButton('📋 О тестах'),
         telebot.types.KeyboardButton('❤️ О канале')
     )
     return markup
@@ -522,10 +589,14 @@ def get_test_type_keyboard():
     )
     return markup
 
+# ============================================
 # === СОСТОЯНИЯ ===
+# ============================================
 user_test_data = {}
 
-# === КОМАНДЫ ===
+# ============================================
+# === КОМАНДЫ БОТА ===
+# ============================================
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     chat_id = message.chat.id
@@ -575,6 +646,9 @@ def start_menu(message):
     
     bot.send_message(message.chat.id, welcome_text, reply_markup=get_main_keyboard())
 
+# ============================================
+# === ОБРАБОТЧИКИ КНОПОК ===
+# ============================================
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def show_test_selection(message):
     text = (
@@ -605,6 +679,50 @@ def start_paid_test(message):
         bot.send_message(chat_id, "💎 Платный тест — 50 ₽\n\nОплата через Telegram Stars скоро будет доступна.\nА пока пройдите бесплатный тест.")
         show_topic_selection(message, "free", 10)
 
+@bot.message_handler(func=lambda m: m.text == '📋 О тестах')
+def about_tests(message):
+    text = (
+        "📋 О ТЕСТАХ ЖИЗНЬ+\n\n"
+        "Каждый тест уникален — вопросы генерируются ИИ.\n"
+        "Анализ проводят виртуальные психолог и коуч.\n\n"
+        "🔹 Бесплатный: 10 вопросов, анализ 700+ знаков\n"
+        "🔹 Платный: 20 вопросов, анализ 1400+ знаков\n\n"
+        "🔹 Темы:\n"
+        "• Психология\n"
+        "• Отношения\n"
+        "• Карьера\n"
+        "• Здоровье\n"
+        "• Финансы\n"
+        "• Личность\n\n"
+        "Результаты НЕ сохраняются."
+    )
+    
+    bot.send_message(message.chat.id, text, reply_markup=get_main_keyboard())
+
+@bot.message_handler(func=lambda m: m.text == '❤️ О канале')
+def about_channel(message):
+    text = (
+        "❤️ О КАНАЛЕ ЖИЗНЬ+\n\n"
+        "Канал о психологии и саморазвитии.\n\n"
+        f"📌 Подписывайтесь: {CHANNEL_ID}\n\n"
+        "🌟 Каждый день — новая возможность стать лучше!"
+    )
+    
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton(
+        "📢 Перейти в канал",
+        url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"
+    ))
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup)
+
+@bot.message_handler(func=lambda m: m.text == '🔙 На главную')
+def back_to_main(message):
+    start_menu(message)
+
+# ============================================
+# === ВЫБОР ТЕМЫ ===
+# ============================================
 def show_topic_selection(message, test_type, count):
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     
@@ -662,6 +780,14 @@ def handle_topic_selection(call):
         logger.error(f"Ошибка: {e}")
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {str(e)[:100]}")
 
+@bot.callback_query_handler(func=lambda call: call.data == 'cancel')
+def callback_cancel(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    bot.send_message(call.message.chat.id, "❌ Отменено.", reply_markup=get_main_keyboard())
+
+# ============================================
+# === ПРОХОЖДЕНИЕ ТЕСТА ===
+# ============================================
 def send_question(chat_id):
     state = user_test_data.get(chat_id)
     if not state:
@@ -721,16 +847,29 @@ def handle_answer(message):
     else:
         send_question(chat_id)
 
+# ============================================
+# === ЗАВЕРШЕНИЕ ТЕСТА ===
+# ============================================
 def finish_test(chat_id):
     state = user_test_data.get(chat_id)
     if not state:
+        return
+    
+    # Проверяем, что есть ответы
+    if not state.get('scores'):
+        bot.send_message(chat_id, "❌ Нет ответов для анализа.")
+        del user_test_data[chat_id]
         return
     
     total_score = sum(state['scores'])
     max_score = len(state['questions']) * 3
     answers_str = ', '.join(state['answers'])
     is_paid = state.get('is_paid', False)
-    is_daily = state.get('is_daily', False)
+    
+    if max_score == 0:
+        bot.send_message(chat_id, "❌ Ошибка: нет вопросов.")
+        del user_test_data[chat_id]
+        return
     
     bot.send_message(
         chat_id,
@@ -755,6 +894,7 @@ def finish_test(chat_id):
             del user_test_data[chat_id]
             return
         
+        # Сертификат
         try:
             user_name = bot.get_chat(chat_id).first_name or "Пользователь"
             cert_path = generate_certificate(user_name, state['topic'], total_score, len(state['questions']))
@@ -766,14 +906,18 @@ def finish_test(chat_id):
         except Exception as e:
             logger.error(f"Ошибка сертификата: {e}")
         
-        img_path = generate_result_image(total_score, max_score, state['topic'])
+        # Картинка результата
+        try:
+            img_path = generate_result_image(total_score, max_score, state['topic'])
+            if img_path:
+                with open(img_path, 'rb') as photo:
+                    bot.send_photo(chat_id, photo, caption=f"🌟 Ваш результат: {total_score} из {max_score}")
+                os.remove(img_path)
+        except Exception as e:
+            logger.error(f"Ошибка картинки: {e}")
         
+        # Текст результата
         result_text = f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}"
-        
-        if img_path:
-            with open(img_path, 'rb') as photo:
-                bot.send_photo(chat_id, photo, caption=f"🌟 Ваш результат: {total_score} из {max_score}")
-            os.remove(img_path)
         
         if len(result_text) > 4096:
             parts = [result_text[i:i+4096] for i in range(0, len(result_text), 4096)]
@@ -787,10 +931,9 @@ def finish_test(chat_id):
         markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         markup.add(
             telebot.types.KeyboardButton('🎯 Пройти тест'),
-            telebot.types.KeyboardButton('📊 Мои результаты')
+            telebot.types.KeyboardButton('📋 О тестах')
         )
         markup.add(
-            telebot.types.KeyboardButton('📋 О тестах'),
             telebot.types.KeyboardButton('❤️ О канале')
         )
         
@@ -803,66 +946,9 @@ def finish_test(chat_id):
     if chat_id in user_test_data:
         del user_test_data[chat_id]
 
-# === МОИ РЕЗУЛЬТАТЫ ===
-@bot.message_handler(func=lambda m: m.text == '📊 Мои результаты')
-def show_results(message):
-    bot.send_message(
-        message.chat.id,
-        "📭 Мы НЕ храним результаты.\n\n"
-        "Ваши данные конфиденциальны.\n"
-        "Результаты приходят и исчезают.\n\n"
-        "Чтобы пройти новый тест, нажмите «🎯 Пройти тест»."
-    )
-
-# === О ТЕСТАХ ===
-@bot.message_handler(func=lambda m: m.text == '📋 О тестах')
-def about_tests(message):
-    text = (
-        "📋 О ТЕСТАХ ЖИЗНЬ+\n\n"
-        "Каждый тест уникален — вопросы генерируются ИИ.\n"
-        "Анализ проводят виртуальные психолог и коуч.\n\n"
-        "🔹 Бесплатный: 10 вопросов, анализ 700+ знаков\n"
-        "🔹 Платный: 20 вопросов, анализ 1400+ знаков\n\n"
-        "🔹 Темы:\n"
-        "• Психология\n"
-        "• Отношения\n"
-        "• Карьера\n"
-        "• Здоровье\n"
-        "• Финансы\n"
-        "• Личность\n\n"
-        "Результаты НЕ сохраняются."
-    )
-    
-    bot.send_message(message.chat.id, text, reply_markup=get_main_keyboard())
-
-# === О КАНАЛЕ ===
-@bot.message_handler(func=lambda m: m.text == '❤️ О канале')
-def about_channel(message):
-    text = (
-        "❤️ О КАНАЛЕ ЖИЗНЬ+\n\n"
-        "Канал о психологии и саморазвитии.\n\n"
-        f"📌 Подписывайтесь: {CHANNEL_ID}\n\n"
-        "🌟 Каждый день — новая возможность стать лучше!"
-    )
-    
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton(
-        "📢 Перейти в канал",
-        url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"
-    ))
-    
-    bot.send_message(message.chat.id, text, reply_markup=markup)
-
-@bot.message_handler(func=lambda m: m.text == '🔙 На главную')
-def back_to_main(message):
-    start_menu(message)
-
-@bot.callback_query_handler(func=lambda call: call.data == 'cancel')
-def callback_cancel(call):
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    bot.send_message(call.message.chat.id, "❌ Отменено.", reply_markup=get_main_keyboard())
-
+# ============================================
 # === АДМИН-КОМАНДЫ ===
+# ============================================
 @bot.message_handler(commands=['daily'])
 def manual_daily_test(message):
     if message.chat.id not in ADMIN_IDS:
@@ -904,7 +990,9 @@ def test_post(message):
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, msg.message_id)
 
+# ============================================
 # === ПЛАНИРОВЩИК ===
+# ============================================
 scheduler = BackgroundScheduler()
 
 def schedule_morning():
@@ -922,17 +1010,35 @@ scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
 scheduler.start()
 logger.info("✅ Планировщик запущен")
 
+# ============================================
 # === ЗАПУСК ===
+# ============================================
 if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info("🚀 ЗАПУСК БОТА")
     logger.info("=" * 50)
     
+    if not BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN не установлен!")
+        exit(1)
+    
+    try:
+        chat = bot.get_chat(CHANNEL_ID)
+        logger.info(f"✅ Канал найден: {chat.title}")
+    except Exception as e:
+        logger.error(f"❌ Канал {CHANNEL_ID} не найден: {e}")
+    
     check_bot_in_channel()
     
+    # Очищаем старые тесты при старте
+    cleanup_old_daily_tests()
+    
+    logger.info("=" * 50)
     logger.info("✅ БОТ ГОТОВ К РАБОТЕ!")
+    logger.info("=" * 50)
     
     try:
         bot.polling(none_stop=True, interval=1, timeout=60)
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"❌ Ошибка при запуске: {e}")
+        logger.error(traceback.format_exc())
