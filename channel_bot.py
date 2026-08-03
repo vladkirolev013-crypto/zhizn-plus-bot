@@ -24,7 +24,6 @@ CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
 
-# ТВОЙ ID (АДМИН)
 ADMIN_IDS = [8746212340]
 
 if not BOT_TOKEN:
@@ -34,7 +33,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# GIGACHAT
+# GIGACHAT С ЛОГИРОВАНИЕМ
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -59,6 +58,7 @@ def get_giga_token():
         )
         
         if response.status_code != 200:
+            logger.error(f"Ошибка токена: {response.status_code}")
             return None
             
         token = response.json()['access_token']
@@ -67,11 +67,14 @@ def get_giga_token():
         return token
         
     except Exception as e:
+        logger.error(f"Ошибка токена: {e}")
         return None
 
-def ask_giga(system, user, max_tokens=2500):
+def ask_giga(system, user, max_tokens=2000):
+    """Отправляет запрос в GigaChat с логированием"""
     token = get_giga_token()
     if not token:
+        logger.error("❌ Токен не получен")
         return None
     
     headers = {
@@ -85,12 +88,16 @@ def ask_giga(system, user, max_tokens=2500):
             {"role": "system", "content": system},
             {"role": "user", "content": user}
         ],
-        "temperature": 0.95,
+        "temperature": 0.9,
         "max_tokens": max_tokens
     }
     
     try:
-        # ЖДЕМ ОТВЕТА ДО 60 СЕКУНД (НО ПОКАЗЫВАЕМ ТОЛЬКО ЧЕРЕЗ 40)
+        # ЛОГИРУЕМ ЗАПРОС
+        logger.info("📤 Отправляю запрос в GigaChat")
+        logger.info(f"📤 System: {system[:100]}...")
+        logger.info(f"📤 User: {user[:100]}...")
+        
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -99,28 +106,36 @@ def ask_giga(system, user, max_tokens=2500):
             verify=False
         )
         
+        # ЛОГИРУЕМ ОТВЕТ
+        logger.info(f"✅ GigaChat ответил: {response.status_code}")
+        
         if response.status_code != 200:
+            logger.error(f"❌ Текст ошибки: {response.text[:500]}")
             return None
         
-        return response.json()['choices'][0]['message']['content']
+        result = response.json()
+        content = result['choices'][0]['message']['content']
+        logger.info(f"✅ Ответ получен, длина: {len(content)} символов")
+        return content
         
     except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут GigaChat (60 секунд)")
         return None
     except Exception as e:
+        logger.error(f"❌ Ошибка GigaChat: {e}")
         return None
 
 # ============================================
-# ФУНКЦИЯ С ПРИНУДИТЕЛЬНЫМ ОЖИДАНИЕМ 40 СЕКУНД
+# ФУНКЦИЯ С ОЖИДАНИЕМ 40 СЕКУНД
 # ============================================
-def ask_giga_with_wait(system, user, max_tokens=2500):
-    """Отправляет запрос в GigaChat, но ответ ВСЕГДА приходит не раньше чем через 40 секунд"""
+def ask_giga_with_wait(system, user, max_tokens=2000):
     start_time = time.time()
     result = ask_giga(system, user, max_tokens)
     elapsed = time.time() - start_time
     
-    # Если ответ пришел быстрее чем за 40 секунд — ждем оставшееся время
     if elapsed < 40:
         wait_time = 40 - elapsed
+        logger.info(f"⏳ Ожидание {wait_time:.1f} секунд (для стабильности)")
         time.sleep(wait_time)
     
     return result
@@ -147,7 +162,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS stats
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
               free_count INTEGER DEFAULT 0, 
               paid_count INTEGER DEFAULT 0)''')
-# Добавляем начальную запись, если её нет
 c.execute("SELECT COUNT(*) FROM stats")
 if c.fetchone()[0] == 0:
     c.execute("INSERT INTO stats (free_count, paid_count) VALUES (0, 0)")
@@ -166,33 +180,125 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# ГЕНЕРАТОРЫ (ВСЁ ЧЕРЕЗ GIGACHAT С ОЖИДАНИЕМ 40 СЕК)
+# ГЕНЕРАТОР ТЕСТОВ (УПРОЩЕННЫЙ)
 # ============================================
 def generate_test_questions(topic, count=10):
-    system = "Ты — психолог. Составь вопросы для теста. Формат: JSON."
-    user = f"Составь {count} вопросов на тему '{topic}'. Верни ТОЛЬКО JSON."
+    """Упрощенная генерация тестов с проверкой ответа"""
+    system = "Ты — психолог. Составь вопросы для теста. Ответь ТОЛЬКО JSON."
+    
+    user = f"""Составь {count} вопросов на тему "{topic}".
+
+    Формат ответа (строгий JSON):
+    {{
+        "questions": [
+            {{
+                "question": "текст вопроса?",
+                "options": {{
+                    "A": "вариант 1",
+                    "B": "вариант 2",
+                    "C": "вариант 3",
+                    "D": "вариант 4"
+                }},
+                "scores": {{
+                    "A": 0,
+                    "B": 1,
+                    "C": 2,
+                    "D": 3
+                }}
+            }}
+        ]
+    }}
+    
+    Верни ТОЛЬКО JSON, без пояснений."""
+    
     response = ask_giga_with_wait(system, user)
+    
     if not response:
+        logger.error("❌ GigaChat не вернул ответ")
         return None
+    
+    # ПРОВЕРЯЕМ, ЧТО ПРИШЛО
+    logger.info(f"📥 Ответ GigaChat: {response[:200]}...")
+    
     try:
+        # Ищем JSON в ответе
         start = response.find('{')
         end = response.rfind('}') + 1
-        data = json.loads(response[start:end])
-        return data.get('questions', [])[:count]
-    except:
+        
+        if start == -1 or end == -1:
+            logger.error("❌ В ответе нет JSON")
+            return None
+        
+        json_str = response[start:end]
+        data = json.loads(json_str)
+        questions = data.get('questions', [])
+        
+        if not questions:
+            logger.error("❌ В JSON нет ключа 'questions'")
+            return None
+        
+        if len(questions) < count:
+            logger.warning(f"⚠️ Получено {len(questions)} вопросов, нужно {count}")
+        
+        logger.info(f"✅ Получено {len(questions)} вопросов")
+        return questions[:count]
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Ошибка парсинга JSON: {e}")
+        logger.error(f"❌ Текст: {response[:500]}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Ошибка: {e}")
         return None
 
+# ============================================
+# ГЕНЕРАТОР АНАЛИЗА
+# ============================================
 def generate_analysis(topic, answers, score, total, is_paid):
     min_len = 1400 if is_paid else 700
-    system = "Ты — психолог и коуч. Дай глубокий анализ."
-    user = f"Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}. Напиши анализ (минимум {min_len} знаков) с рекомендациями книг, упражнений, видео на русском языке."
-    response = ask_giga_with_wait(system, user)
+    
+    # Разные стили для психолога и коуча
+    system = """Ты — команда из двух экспертов:
+
+1. ПСИХОЛОГ (мягкий, понимающий, глубокий):
+   - Говорит тепло и принимающе
+   - Помогает увидеть свои сильные стороны
+   - Дает поддержку и понимание
+   - Использует язык, который снимает тревогу
+
+2. КОУЧ (бодрый, энергичный, направляющий):
+   - Говорит четко и вдохновляюще
+   - Дает конкретные шаги
+   - Помогает увидеть возможности
+   - Использует язык, который зовет к действию
+
+Объедините свои голоса в один анализ."""
+
+    user = f"""Тема теста: {topic}
+Ответы пользователя: {answers}
+Результат: {score} из {total} баллов
+
+Напиши анализ (минимум {min_len} знаков), в котором:
+1. Психолог мягко и принимающе описывает состояние
+2. Коуч дает энергичные рекомендации
+3. В конце — персональные рекомендации: книги, упражнения, видео (ВСЁ НА РУССКОМ)
+
+Говори так, чтобы человек почувствовал: "это про меня", "меня понимают", "я могу действовать"."""
+    
+    response = ask_giga_with_wait(system, user, max_tokens=3000 if is_paid else 2000)
+    
     if not response:
         return None
+    
     if len(response) < min_len * 0.7:
+        logger.warning(f"⚠️ Анализ короткий ({len(response)} знаков)")
         return None
+    
     return response
 
+# ============================================
+# ГЕНЕРАТОР ПОСТА
+# ============================================
 def generate_post(theme):
     system = "Ты — психолог. Напиши пост для Telegram."
     user = f"Тема: {theme}. Минимум 700 знаков."
@@ -203,8 +309,10 @@ def generate_post(theme):
         return None
     return response
 
+# ============================================
+# ГЕНЕРАТОР КАРТИНКИ
+# ============================================
 def generate_image():
-    """Генерирует позитивную картинку"""
     try:
         prompt = "positive motivation inspiration beautiful landscape"
         url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?width=1080&height=720&nologo=true"
@@ -236,7 +344,7 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ============================================
-# ГЛАВНОЕ МЕНЮ (ДЛЯ ВСЕХ)
+# МЕНЮ
 # ============================================
 def main_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -244,9 +352,6 @@ def main_menu():
     mk.add('❤️ О канале')
     return mk
 
-# ============================================
-# АДМИН-МЕНЮ (ВИДНО ТОЛЬКО ТЕБЕ)
-# ============================================
 def admin_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('📤 Отправить пост', '🧠 Тест в канал')
@@ -254,9 +359,6 @@ def admin_menu():
     mk.add('🚀 Старт')
     return mk
 
-# ============================================
-# МЕНЮ ВЫБОРА ТИПА ТЕСТА
-# ============================================
 def test_type_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🧠 Бесплатный (10 вопросов)')
@@ -270,11 +372,10 @@ def test_type_menu():
 sessions = {}
 
 # ============================================
-# ОБРАБОТЧИК КОМАНД /start
+# ОБРАБОТЧИКИ
 # ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
-    # Проверка перехода по ежедневному тесту
     if ' ' in message.text:
         param = message.text.split(' ', 1)[1]
         if param.startswith('daily_'):
@@ -298,29 +399,17 @@ def start(message):
             except:
                 pass
     
-    # Приветствие
-    welcome_text = (
-        "🌟 Добро пожаловать в бота Жизнь+!\n\n"
-        "Я здесь, чтобы помочь тебе узнать себя глубже.\n"
-        "Нажми «🎯 Пройти тест», чтобы начать, или «❤️ О канале», чтобы узнать больше."
-    )
+    welcome = "🌟 Добро пожаловать в бота Жизнь+!\n\nНажми «🎯 Пройти тест» или «❤️ О канале»."
     
-    # Показываем нужное меню
     if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, welcome_text, reply_markup=admin_menu())
+        bot.send_message(message.chat.id, welcome, reply_markup=admin_menu())
     else:
-        bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu())
+        bot.send_message(message.chat.id, welcome, reply_markup=main_menu())
 
-# ============================================
-# КНОПКА СТАРТ
-# ============================================
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
 def start_button(message):
     start(message)
 
-# ============================================
-# КНОПКА О КАНАЛЕ (НЛП-ОПИСАНИЕ)
-# ============================================
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
     text = (
@@ -337,35 +426,20 @@ def about_channel(message):
         url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"
     ))
     
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, text, reply_markup=mk)
-    else:
-        bot.send_message(message.chat.id, text, reply_markup=mk)
+    bot.send_message(message.chat.id, text, reply_markup=mk)
 
-# ============================================
-# КНОПКА "ПРОЙТИ ТЕСТ"
-# ============================================
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def choose_test_type(message):
     bot.send_message(
         message.chat.id,
-        "🎯 Выберите тип теста:\n\n"
-        "🧠 Бесплатный — 10 вопросов, анализ 700+ знаков\n"
-        "💎 Платный — 20 вопросов, анализ 1400+ знаков\n\n"
-        "👇 Выберите вариант:",
+        "🎯 Выберите тип теста:\n\n🧠 Бесплатный — 10 вопросов\n💎 Платный — 20 вопросов",
         reply_markup=test_type_menu()
     )
 
-# ============================================
-# КНОПКА "НАЗАД В ГЛАВНОЕ МЕНЮ"
-# ============================================
 @bot.message_handler(func=lambda m: m.text == '🔙 Главное меню')
 def back_to_main(message):
     start(message)
 
-# ============================================
-# ОБРАБОТЧИКИ ТИПОВ ТЕСТА
-# ============================================
 @bot.message_handler(func=lambda m: m.text == '🧠 Бесплатный (10 вопросов)')
 def free_test(message):
     show_topics(message, 'free', 10)
@@ -406,9 +480,7 @@ def topic_callback(c):
         is_paid = test_type == 'paid'
         
         bot.edit_message_text(
-            "⏳ GigaChat генерирует тест...\n"
-            "Это может занять до 40 секунд.\n"
-            "Пожалуйста, подождите...",
+            "⏳ Генерация теста...\nПодождите до 40 секунд.",
             c.message.chat.id,
             c.message.message_id
         )
@@ -494,7 +566,7 @@ def handle_answer(message):
     send_question(message.chat.id)
 
 # ============================================
-# ЗАВЕРШЕНИЕ ТЕСТА + СТАТИСТИКА
+# ЗАВЕРШЕНИЕ ТЕСТА
 # ============================================
 def finish_test(chat_id):
     s = sessions.get(chat_id)
@@ -506,7 +578,6 @@ def finish_test(chat_id):
     answers = ', '.join(s['answers'])
     is_paid = s.get('is_paid', False)
     
-    # ОБНОВЛЯЕМ СТАТИСТИКУ
     if is_paid:
         c.execute("UPDATE stats SET paid_count = paid_count + 1")
     else:
@@ -517,8 +588,7 @@ def finish_test(chat_id):
         chat_id,
         f"📊 Тест завершен!\n\n"
         f"✅ Результат: {score} из {total}\n"
-        f"⏳ GigaChat генерирует анализ...\n"
-        f"Это займет до 40 секунд."
+        f"⏳ Генерация анализа...\nДо 40 секунд."
     )
     
     analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
@@ -531,7 +601,6 @@ def finish_test(chat_id):
         del sessions[chat_id]
         return
     
-    # Отправляем результат
     bot.send_message(
         chat_id,
         f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}",
@@ -549,7 +618,7 @@ def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ Это может занять до 40 секунд.")
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
     text = generate_post("мотивация")
     
     if not text:
@@ -564,7 +633,6 @@ def admin_test_to_channel(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    # Показываем выбор темы
     mk = telebot.types.InlineKeyboardMarkup(row_width=2)
     for topic, emoji in TEST_TOPICS.items():
         mk.add(telebot.types.InlineKeyboardButton(
@@ -585,7 +653,7 @@ def admin_test_topic_callback(c):
         topic = c.data.replace('admin_test_', '')
         
         bot.edit_message_text(
-            f"⏳ Генерирую тест по теме {topic}...\nЭто может занять до 40 секунд.",
+            f"⏳ Генерация теста по теме {topic}...",
             c.message.chat.id,
             c.message.message_id
         )
@@ -595,11 +663,10 @@ def admin_test_topic_callback(c):
         if not questions:
             bot.send_message(
                 c.message.chat.id,
-                "❌ Не удалось сгенерировать тест. Попробуйте позже."
+                "❌ Не удалось сгенерировать тест."
             )
             return
         
-        # Сохраняем в базу
         c.execute(
             "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
             (topic, json.dumps(questions), datetime.now().isoformat())
@@ -607,7 +674,6 @@ def admin_test_topic_callback(c):
         conn.commit()
         test_id = c.lastrowid
         
-        # Отправляем в канал
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton(
             "🎯 Пройти тест",
@@ -616,9 +682,7 @@ def admin_test_topic_callback(c):
         
         bot.send_message(
             CHANNEL_ID,
-            f"🧠 ТЕСТ ПО ТЕМЕ: {topic.upper()}\n\n"
-            f"📊 10 вопросов\n\n"
-            f"Проверьте себя прямо сейчас!",
+            f"🧠 ТЕСТ ПО ТЕМЕ: {topic.upper()}\n\n📊 10 вопросов\n\nПроверьте себя прямо сейчас!",
             reply_markup=mk
         )
         
@@ -641,7 +705,7 @@ def admin_image(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "🖼 Генерирую картинку...")
+    bot.send_message(message.chat.id, "🖼 Генерация картинки...")
     
     img_path = generate_image()
     if img_path:
@@ -663,23 +727,23 @@ def admin_stats(message):
     if row:
         free_count, paid_count = row
         text = (
-            "📊 СТАТИСТИКА ТЕСТОВ\n\n"
-            f"🧠 Бесплатных тестов пройдено: {free_count}\n"
-            f"💎 Платных тестов пройдено: {paid_count}\n\n"
+            "📊 СТАТИСТИКА\n\n"
+            f"🧠 Бесплатных: {free_count}\n"
+            f"💎 Платных: {paid_count}\n\n"
             f"Всего: {free_count + paid_count}"
         )
     else:
-        text = "📊 Статистика пока пуста."
+        text = "📊 Статистика пуста."
     
     bot.send_message(message.chat.id, text)
 
 # ============================================
-# ЕЖЕДНЕВНЫЙ ТЕСТ В КАНАЛ
+# ЕЖЕДНЕВНЫЙ ТЕСТ
 # ============================================
 def post_daily_test():
     topics = list(TEST_TOPICS.keys())
     random.shuffle(topics)
-    topic = topics[0]  # Берем одну случайную тему
+    topic = topics[0]
     
     questions = generate_test_questions(topic, 10)
     if questions:
@@ -706,7 +770,7 @@ def post_daily_test():
         )
 
 # ============================================
-# АДМИН-КОМАНДЫ (ДЛЯ КОМАНД)
+# АДМИН-КОМАНДЫ
 # ============================================
 @bot.message_handler(commands=['daily'])
 def cmd_daily(message):
@@ -722,7 +786,7 @@ def cmd_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ Это может занять до 40 секунд.")
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
     text = generate_post("мотивация")
     
     if not text:
