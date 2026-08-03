@@ -6,10 +6,10 @@ import json
 import time
 import logging
 import threading
+import uuid
+import base64
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
-from gigachat import GigaChat
-from gigachat.models import Messages, Message, Role
 from flask import Flask
 
 # === НАСТРОЙКИ ===
@@ -21,13 +21,62 @@ GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET', '7b92ff4b-a058-4d3e-a1
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# === GIGACHAT ===
-giga = GigaChat(
-    credentials=f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}",
-    scope="GIGACHAT_API_PERS",
-    verify_ssl_certs=True
-)
+# === GIGACHAT ПРЯМЫЕ ЗАПРОСЫ (без библиотеки) ===
+def get_giga_token():
+    try:
+        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
+        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+        headers = {
+            'Authorization': f'Basic {base64_auth}',
+            'RqUID': str(uuid.uuid4()),
+            'Content-Type': 'application/json'
+        }
+        response = requests.post(
+            'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
+            headers=headers,
+            json={"scope": "GIGACHAT_API_PERS"},
+            timeout=15
+        )
+        if response.status_code == 200:
+            return response.json()['access_token']
+        logger.error(f"Ошибка токена: {response.status_code}")
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка получения токена: {e}")
+        return None
 
+def ask_giga(system_prompt, user_prompt):
+    token = get_giga_token()
+    if not token:
+        raise Exception("Не удалось получить токен GigaChat")
+    
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        "model": "GigaChat",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 1000
+    }
+    
+    response = requests.post(
+        'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
+        headers=headers,
+        json=payload,
+        timeout=30
+    )
+    
+    if response.status_code == 200:
+        return response.json()['choices'][0]['message']['content']
+    else:
+        raise Exception(f"Ошибка GigaChat: {response.status_code}")
+
+# === TELEGRAM BOT ===
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # === БАЗА ДАННЫХ ===
@@ -40,7 +89,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_results (id INTEGER PRIMARY KEY AUT
 conn.commit()
 user_state = {}
 
-# === ВЕБ-СЕРВЕР (для Render) ===
+# === ВЕБ-СЕРВЕР ДЛЯ RENDER ===
 app = Flask(__name__)
 @app.route('/')
 def home():
@@ -57,8 +106,9 @@ def generate_post(theme):
     logger.info(f"Генерирую пост: {theme}")
     system = "Ты — позитивный психолог. Пиши посты для Telegram."
     user = f"Пост на тему: {theme}. Длина 500-700 символов. 4-5 эмодзи. Заголовок, текст, совет, мотивация. Без markdown. Хештеги."
-    response = giga.chat(Messages(messages=[Message(role=Role.SYSTEM, content=system), Message(role=Role.USER, content=user)]))
-    return response.choices[0].message.content
+    text = ask_giga(system, user)
+    logger.info(f"GigaChat ответил: {len(text)} символов")
+    return text
 
 def generate_image(theme):
     try:
@@ -66,7 +116,8 @@ def generate_image(theme):
         url = f"https://image.pollinations.ai/prompt/{prompt}?width=1080&height=1080&nologo=true"
         img = requests.get(url, timeout=30).content
         filename = f'/tmp/temp_{int(datetime.now().timestamp())}.jpg'
-        with open(filename, 'wb') as f: f.write(img)
+        with open(filename, 'wb') as f:
+            f.write(img)
         return filename
     except Exception as e:
         logger.error(f"Ошибка картинки: {e}")
