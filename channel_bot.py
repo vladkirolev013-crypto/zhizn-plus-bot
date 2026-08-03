@@ -91,11 +91,12 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
+        # УВЕЛИЧИВАЕМ ТАЙМАУТ ДО 60 СЕКУНД
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
             json=payload,
-            timeout=30,
+            timeout=60,
             verify=False
         )
         
@@ -105,6 +106,9 @@ def ask_giga(system, user, max_tokens=2500):
         
         return response.json()['choices'][0]['message']['content']
         
+    except requests.exceptions.Timeout:
+        logger.error("GigaChat таймаут (60 секунд)")
+        return None
     except Exception as e:
         logger.error(f"GigaChat ошибка: {e}")
         return None
@@ -113,7 +117,7 @@ def ask_giga(system, user, max_tokens=2500):
 # TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
-bot.remove_webhook()  # УДАЛЯЕМ СТАРЫЙ ВЕБХУК
+bot.remove_webhook()
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -223,7 +227,6 @@ sessions = {}
 # ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
-    # Проверяем переход по ежедневному тесту
     if ' ' in message.text:
         param = message.text.split(' ', 1)[1]
         if param.startswith('daily_'):
@@ -318,7 +321,6 @@ def free_test(message):
 
 @bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов)')
 def paid_test(message):
-    # Проверяем, админ ли пользователь
     if message.chat.id in ADMIN_IDS:
         show_topics(message, 'paid', 20)
     else:
@@ -355,7 +357,9 @@ def topic_callback(c):
         is_paid = test_type == 'paid'
         
         bot.edit_message_text(
-            "⏳ GigaChat генерирует тест...\nПодождите несколько секунд.",
+            "⏳ GigaChat генерирует тест...\n"
+            "Это может занять до 40 секунд.\n"
+            "Пожалуйста, подождите...",
             c.message.chat.id,
             c.message.message_id
         )
@@ -462,7 +466,7 @@ def finish_test(chat_id):
         f"📊 Тест завершен!\n\n"
         f"✅ Результат: {score} из {total}\n"
         f"⏳ GigaChat генерирует анализ...\n"
-        f"Это займет до 30 секунд."
+        f"Это займет до 40 секунд."
     )
     
     analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
@@ -536,7 +540,7 @@ def cmd_post(message):
         bot.send_message(message.chat.id, "⛔ Нет прав.")
         return
     
-    bot.send_message(message.chat.id, "📤 Генерация поста...")
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ Это может занять до 40 секунд.")
     text = generate_post("мотивация")
     
     if not text:
