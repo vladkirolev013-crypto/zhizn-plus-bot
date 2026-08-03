@@ -14,7 +14,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 import urllib3
 
-# ОТКЛЮЧАЕМ SSL ПРЕДУПРЕЖДЕНИЯ
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================
@@ -59,7 +58,6 @@ def get_giga_token():
         )
         
         if response.status_code != 200:
-            logger.error(f"Ошибка токена: {response.status_code}")
             return None
             
         token = response.json()['access_token']
@@ -68,7 +66,6 @@ def get_giga_token():
         return token
         
     except Exception as e:
-        logger.error(f"Ошибка токена: {e}")
         return None
 
 def ask_giga(system, user, max_tokens=2500):
@@ -78,6 +75,7 @@ def ask_giga(system, user, max_tokens=2500):
     
     headers = {
         'Authorization': f'Bearer {token}',
+        'RqUID': str(uuid.uuid4()),
         'Content-Type': 'application/json'
     }
     payload = {
@@ -91,7 +89,7 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
-        # УВЕЛИЧИВАЕМ ТАЙМАУТ ДО 60 СЕКУНД
+        # ЖДЕМ ОТВЕТА ДО 60 СЕКУНД
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -101,16 +99,13 @@ def ask_giga(system, user, max_tokens=2500):
         )
         
         if response.status_code != 200:
-            logger.error(f"GigaChat ошибка: {response.status_code}")
             return None
         
         return response.json()['choices'][0]['message']['content']
         
     except requests.exceptions.Timeout:
-        logger.error("GigaChat таймаут (60 секунд)")
         return None
     except Exception as e:
-        logger.error(f"GigaChat ошибка: {e}")
         return None
 
 # ============================================
@@ -118,6 +113,7 @@ def ask_giga(system, user, max_tokens=2500):
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
 bot.remove_webhook()
+time.sleep(1)
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -253,7 +249,6 @@ def start(message):
     bot.send_message(
         message.chat.id,
         "🌟 Добро пожаловать в бота Жизнь+!\n\n"
-        "Я помогу вам пройти психологические тесты и получить анализ от экспертов.\n\n"
         "👇 Нажмите кнопку «🎯 Пройти тест» чтобы начать!",
         reply_markup=main_menu()
     )
@@ -278,14 +273,12 @@ def about_tests(message):
         "📋 О ТЕСТАХ ЖИЗНЬ+\n\n"
         "🧠 Бесплатный тест:\n"
         "• 10 вопросов\n"
-        "• Анализ 700+ знаков\n"
-        "• Рекомендации от психолога\n\n"
+        "• Анализ 700+ знаков\n\n"
         "💎 Платный тест:\n"
         "• 20 вопросов\n"
         "• Анализ 1400+ знаков\n"
         "• Книги, упражнения, видео\n\n"
-        "✅ Результаты НЕ сохраняются\n"
-        "✅ Каждый раз новые вопросы"
+        "✅ Результаты НЕ сохраняются"
     )
     bot.send_message(message.chat.id, text, reply_markup=main_menu())
 
@@ -299,18 +292,13 @@ def about_channel(message):
     bot.send_message(
         message.chat.id,
         f"❤️ О КАНАЛЕ ЖИЗНЬ+\n\n"
-        f"Канал о психологии и саморазвитии.\n\n"
         f"📌 Подписывайтесь: {CHANNEL_ID}",
         reply_markup=mk
     )
 
 @bot.message_handler(func=lambda m: m.text == '🔙 Главное меню')
 def back_to_main(message):
-    bot.send_message(
-        message.chat.id,
-        "🌟 Главное меню",
-        reply_markup=main_menu()
-    )
+    bot.send_message(message.chat.id, "🌟 Главное меню", reply_markup=main_menu())
 
 # ============================================
 # ОБРАБОТЧИКИ ВЫБОРА ТИПА ТЕСТА
@@ -326,9 +314,7 @@ def paid_test(message):
     else:
         bot.send_message(
             message.chat.id,
-            "💎 Платный тест — 50 ₽\n\n"
-            "Оплата через Telegram Stars скоро будет доступна.\n"
-            "А пока пройдите бесплатный тест.",
+            "💎 Платный тест — 50 ₽\n\nА пока пройдите бесплатный.",
             reply_markup=test_type_menu()
         )
 
@@ -424,11 +410,7 @@ def send_question(chat_id):
 def stop_test(message):
     if message.chat.id in sessions:
         del sessions[message.chat.id]
-    bot.send_message(
-        message.chat.id,
-        "⏹ Тест прерван",
-        reply_markup=main_menu()
-    )
+    bot.send_message(message.chat.id, "⏹ Тест прерван", reply_markup=main_menu())
 
 @bot.message_handler(func=lambda m: m.text and m.text[0] in 'ABCD')
 def handle_answer(message):
