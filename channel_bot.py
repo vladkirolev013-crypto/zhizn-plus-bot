@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# GIGACHAT С ЛОГИРОВАНИЕМ
+# GIGACHAT
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -70,8 +70,7 @@ def get_giga_token():
         logger.error(f"Ошибка токена: {e}")
         return None
 
-def ask_giga(system, user, max_tokens=2000):
-    """Отправляет запрос в GigaChat с логированием"""
+def ask_giga(system, user, max_tokens=2500):
     token = get_giga_token()
     if not token:
         logger.error("❌ Токен не получен")
@@ -93,11 +92,7 @@ def ask_giga(system, user, max_tokens=2000):
     }
     
     try:
-        # ЛОГИРУЕМ ЗАПРОС
-        logger.info("📤 Отправляю запрос в GigaChat")
-        logger.info(f"📤 System: {system[:100]}...")
-        logger.info(f"📤 User: {user[:100]}...")
-        
+        logger.info("📤 Отправляю запрос в GigaChat...")
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -106,17 +101,13 @@ def ask_giga(system, user, max_tokens=2000):
             verify=False
         )
         
-        # ЛОГИРУЕМ ОТВЕТ
         logger.info(f"✅ GigaChat ответил: {response.status_code}")
         
         if response.status_code != 200:
             logger.error(f"❌ Текст ошибки: {response.text[:500]}")
             return None
         
-        result = response.json()
-        content = result['choices'][0]['message']['content']
-        logger.info(f"✅ Ответ получен, длина: {len(content)} символов")
-        return content
+        return response.json()['choices'][0]['message']['content']
         
     except requests.exceptions.Timeout:
         logger.error("❌ Таймаут GigaChat (60 секунд)")
@@ -128,24 +119,40 @@ def ask_giga(system, user, max_tokens=2000):
 # ============================================
 # ФУНКЦИЯ С ОЖИДАНИЕМ 40 СЕКУНД
 # ============================================
-def ask_giga_with_wait(system, user, max_tokens=2000):
+def ask_giga_with_wait(system, user, max_tokens=2500):
     start_time = time.time()
     result = ask_giga(system, user, max_tokens)
     elapsed = time.time() - start_time
     
     if elapsed < 40:
         wait_time = 40 - elapsed
-        logger.info(f"⏳ Ожидание {wait_time:.1f} секунд (для стабильности)")
+        logger.info(f"⏳ Ожидание {wait_time:.1f} секунд")
         time.sleep(wait_time)
     
     return result
 
 # ============================================
-# TELEGRAM БОТ
+# TELEGRAM БОТ - С ПРИНУДИТЕЛЬНЫМ УДАЛЕНИЕМ ВЕБХУКА
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
-bot.remove_webhook()
+
+# УДАЛЯЕМ ВЕБХУК ПРИ ЗАПУСКЕ
+try:
+    bot.remove_webhook()
+    logger.info("✅ Вебхук удалён")
+except Exception as e:
+    logger.warning(f"⚠️ Вебхук не удалялся: {e}")
 time.sleep(1)
+
+# ПРОВЕРЯЕМ
+webhook_info = bot.get_webhook_info()
+if webhook_info.url:
+    logger.warning(f"⚠️ ВНИМАНИЕ! Вебхук всё ещё активен: {webhook_info.url}")
+    # Пытаемся удалить ещё раз
+    bot.remove_webhook()
+    logger.info("✅ Повторная попытка удаления вебхука")
+else:
+    logger.info("✅ Вебхук отсутствует, бот работает через поллинг")
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -168,7 +175,7 @@ if c.fetchone()[0] == 0:
 conn.commit()
 
 # ============================================
-# ТЕМЫ ТЕСТОВ
+# ТЕМЫ
 # ============================================
 TEST_TOPICS = {
     "психология": "🧠 Психология",
@@ -180,125 +187,38 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# ГЕНЕРАТОР ТЕСТОВ (УПРОЩЕННЫЙ)
+# ГЕНЕРАТОРЫ
 # ============================================
 def generate_test_questions(topic, count=10):
-    """Упрощенная генерация тестов с проверкой ответа"""
-    system = "Ты — психолог. Составь вопросы для теста. Ответь ТОЛЬКО JSON."
-    
-    user = f"""Составь {count} вопросов на тему "{topic}".
-
-    Формат ответа (строгий JSON):
-    {{
-        "questions": [
-            {{
-                "question": "текст вопроса?",
-                "options": {{
-                    "A": "вариант 1",
-                    "B": "вариант 2",
-                    "C": "вариант 3",
-                    "D": "вариант 4"
-                }},
-                "scores": {{
-                    "A": 0,
-                    "B": 1,
-                    "C": 2,
-                    "D": 3
-                }}
-            }}
-        ]
-    }}
-    
-    Верни ТОЛЬКО JSON, без пояснений."""
-    
+    system = "Ты — психолог. Составь вопросы для теста. Формат: JSON."
+    user = f"Составь {count} вопросов на тему '{topic}'. Верни ТОЛЬКО JSON."
     response = ask_giga_with_wait(system, user)
-    
     if not response:
-        logger.error("❌ GigaChat не вернул ответ")
         return None
-    
-    # ПРОВЕРЯЕМ, ЧТО ПРИШЛО
-    logger.info(f"📥 Ответ GigaChat: {response[:200]}...")
-    
     try:
-        # Ищем JSON в ответе
         start = response.find('{')
         end = response.rfind('}') + 1
-        
-        if start == -1 or end == -1:
-            logger.error("❌ В ответе нет JSON")
-            return None
-        
-        json_str = response[start:end]
-        data = json.loads(json_str)
-        questions = data.get('questions', [])
-        
-        if not questions:
-            logger.error("❌ В JSON нет ключа 'questions'")
-            return None
-        
-        if len(questions) < count:
-            logger.warning(f"⚠️ Получено {len(questions)} вопросов, нужно {count}")
-        
-        logger.info(f"✅ Получено {len(questions)} вопросов")
-        return questions[:count]
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"❌ Ошибка парсинга JSON: {e}")
-        logger.error(f"❌ Текст: {response[:500]}")
-        return None
-    except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        data = json.loads(response[start:end])
+        return data.get('questions', [])[:count]
+    except:
         return None
 
-# ============================================
-# ГЕНЕРАТОР АНАЛИЗА
-# ============================================
 def generate_analysis(topic, answers, score, total, is_paid):
     min_len = 1400 if is_paid else 700
-    
-    # Разные стили для психолога и коуча
     system = """Ты — команда из двух экспертов:
-
-1. ПСИХОЛОГ (мягкий, понимающий, глубокий):
-   - Говорит тепло и принимающе
-   - Помогает увидеть свои сильные стороны
-   - Дает поддержку и понимание
-   - Использует язык, который снимает тревогу
-
-2. КОУЧ (бодрый, энергичный, направляющий):
-   - Говорит четко и вдохновляюще
-   - Дает конкретные шаги
-   - Помогает увидеть возможности
-   - Использует язык, который зовет к действию
+1. ПСИХОЛОГ — мягкий, понимающий, глубокий
+2. КОУЧ — бодрый, энергичный, направляющий
 
 Объедините свои голоса в один анализ."""
-
-    user = f"""Тема теста: {topic}
-Ответы пользователя: {answers}
-Результат: {score} из {total} баллов
-
-Напиши анализ (минимум {min_len} знаков), в котором:
-1. Психолог мягко и принимающе описывает состояние
-2. Коуч дает энергичные рекомендации
-3. В конце — персональные рекомендации: книги, упражнения, видео (ВСЁ НА РУССКОМ)
-
-Говори так, чтобы человек почувствовал: "это про меня", "меня понимают", "я могу действовать"."""
     
+    user = f"Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}. Напиши анализ (минимум {min_len} знаков) с рекомендациями книг, упражнений, видео на русском языке."
     response = ask_giga_with_wait(system, user, max_tokens=3000 if is_paid else 2000)
-    
     if not response:
         return None
-    
     if len(response) < min_len * 0.7:
-        logger.warning(f"⚠️ Анализ короткий ({len(response)} знаков)")
         return None
-    
     return response
 
-# ============================================
-# ГЕНЕРАТОР ПОСТА
-# ============================================
 def generate_post(theme):
     system = "Ты — психолог. Напиши пост для Telegram."
     user = f"Тема: {theme}. Минимум 700 знаков."
@@ -309,9 +229,6 @@ def generate_post(theme):
         return None
     return response
 
-# ============================================
-# ГЕНЕРАТОР КАРТИНКИ
-# ============================================
 def generate_image():
     try:
         prompt = "positive motivation inspiration beautiful landscape"
