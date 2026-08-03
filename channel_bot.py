@@ -10,7 +10,7 @@ import uuid
 import base64
 import traceback
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 from PIL import Image, ImageDraw, ImageFont
@@ -21,6 +21,9 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
+
+# === АДМИНЫ (ВАШ ID ВПИСАН) ===
+ADMIN_IDS = [8746212340]  # Ваш ID
 
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не установлен!")
@@ -115,7 +118,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS questions
 c.execute('''CREATE TABLE IF NOT EXISTS user_results 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
               user_id INTEGER, test_id TEXT, answers TEXT, 
-              total_score INTEGER, topic TEXT, ai_analysis TEXT, created_at TEXT)''')
+              total_score INTEGER, topic TEXT, ai_analysis TEXT, recommendations TEXT, created_at TEXT)''')
 
 c.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -132,9 +135,6 @@ TEST_TOPICS = {
     "финансы": "💰 Отношение к деньгам, финансовое мышление",
     "личность": "🌟 Характер, темперамент, личностные качества"
 }
-
-# === АДМИНЫ ===
-ADMIN_IDS = [int(os.environ.get('ADMIN_ID', 0))]
 
 # === ГЕНЕРАЦИЯ ТЕСТА ЧЕРЕЗ GIGACHAT ===
 def generate_test_questions(topic, count=10):
@@ -299,13 +299,10 @@ def get_fallback_questions(topic, count=10):
 
 # === ГЕНЕРАЦИЯ СЕРТИФИКАТА ===
 def generate_certificate(user_name, topic, score, total_questions):
-    """Создает красивый сертификат с фоном на тему теста"""
     try:
-        # Создаем изображение
         img = Image.new('RGB', (1200, 800), color='white')
         draw = ImageDraw.Draw(img)
         
-        # Выбираем фон в зависимости от темы
         backgrounds = {
             "психология": (200, 230, 255),
             "отношения": (255, 200, 220),
@@ -317,36 +314,28 @@ def generate_certificate(user_name, topic, score, total_questions):
         
         bg_color = backgrounds.get(topic, (200, 230, 255))
         
-        # Рисуем градиентный фон
         for i in range(800):
             r = int(bg_color[0] * (1 - i/1600) + 255 * (i/1600))
             g = int(bg_color[1] * (1 - i/1600) + 215 * (i/1600))
             b = int(bg_color[2] * (1 - i/1600) + 200 * (i/1600))
             draw.line([(0, i), (1200, i)], fill=(r, g, b), width=1)
         
-        # Рамка
         draw.rectangle([(20, 20), (1180, 780)], outline=(100, 100, 100), width=3)
         
-        # Заголовок
         title = "СЕРТИФИКАТ О ПРОХОЖДЕНИИ"
         draw.text((600, 80), title, fill=(50, 50, 150), font=None, anchor="mt")
         
-        # Имя пользователя
         name_text = f"🌟 {user_name} 🌟"
         draw.text((600, 200), name_text, fill=(50, 50, 150), font=None, anchor="mt")
         
-        # Текст сертификата
         draw.text((600, 280), "успешно прошел(ла) тест", fill=(80, 80, 80), font=None, anchor="mt")
         
-        # Тема
         topic_text = f"📌 {topic.upper()}"
         draw.text((600, 350), topic_text, fill=(100, 50, 150), font=None, anchor="mt")
         
-        # Результат
         result_text = f"Результат: {score} из {total_questions * 3} баллов"
         draw.text((600, 430), result_text, fill=(50, 50, 50), font=None, anchor="mt")
         
-        # Процент
         percentage = int((score / (total_questions * 3)) * 100)
         if percentage >= 70:
             emoji = "🌟"
@@ -360,14 +349,11 @@ def generate_certificate(user_name, topic, score, total_questions):
         
         draw.text((600, 490), f"{emoji} {status}", fill=(50, 50, 150), font=None, anchor="mt")
         
-        # Дата
         date_text = f"📅 {datetime.now().strftime('%d.%m.%Y')}"
         draw.text((600, 580), date_text, fill=(100, 100, 100), font=None, anchor="mt")
         
-        # Подпись
         draw.text((600, 670), "Жизнь+ | Психология и саморазвитие", fill=(80, 80, 80), font=None, anchor="mt")
         
-        # Сохраняем
         filename = f'/tmp/certificate_{int(time.time())}.png'
         img.save(filename)
         return filename
@@ -376,11 +362,26 @@ def generate_certificate(user_name, topic, score, total_questions):
         logger.error(f"❌ Ошибка генерации сертификата: {e}")
         return None
 
-# === АНАЛИЗ РЕЗУЛЬТАТОВ ===
+# === ГЛУБОКИЙ АНАЛИЗ РЕЗУЛЬТАТОВ С РЕКОМЕНДАЦИЯМИ ===
 def analyze_results(topic, answers, scores, total_questions, is_paid=False):
+    """
+    Генерирует глубокий анализ от психолога и коуча + персональные рекомендации
+    """
     try:
         min_length = 1400 if is_paid else 700
         logger.info(f"Анализирую результаты теста по теме: {topic}, длина: {min_length}+ знаков")
+        
+        # Определяем уровень для количества рекомендаций
+        percentage = int((scores / (total_questions * 3)) * 100)
+        if percentage >= 70:
+            rec_count = 4
+            level = "высокий"
+        elif percentage >= 40:
+            rec_count = 5
+            level = "средний"
+        else:
+            rec_count = 6
+            level = "начальный"
         
         system = """Ты — команда из двух экспертов:
         1. Клинический психолог с 25-летним опытом, доктор наук
@@ -389,7 +390,8 @@ def analyze_results(topic, answers, scores, total_questions, is_paid=False):
         Вы проводите глубокий анализ результатов психологического теста.
         Ваш анализ должен быть максимально полезным, глубоким и персонализированным.
         Пишите тепло, профессионально, с примерами и конкретикой.
-        Используйте эмодзи, переносы строк, структурируйте текст."""
+        Используйте эмодзи, переносы строк, структурируйте текст.
+        ВСЕ РЕКОМЕНДАЦИИ ТОЛЬКО НА РУССКОМ ЯЗЫКЕ."""
         
         user = f"""Проведи анализ результатов теста по теме "{topic}".
         
@@ -397,28 +399,42 @@ def analyze_results(topic, answers, scores, total_questions, is_paid=False):
         {answers}
         
         Общий балл: {scores} из {total_questions * 3}
-        Процент: {int((scores / (total_questions * 3)) * 100)}%
+        Процент: {percentage}%
+        Уровень результата: {level}
         
         Напиши развернутый анализ МИНИМУМ на {min_length} знаков:
         
-        1. 🧠 Оценка от клинического психолога:
+        1. 🧠 Оценка от клинического психолога (30% текста):
            - Глубокий анализ личности на основе ответов
            - Выявление сильных сторон и зон роста
            - Психологический портрет с деталями
            - Рекомендации по работе над собой
         
-        2. 💼 Коучинговый разбор от эксперта:
+        2. 💼 Коучинговый разбор от эксперта (30% текста):
            - Оценка потенциала и возможностей
            - Конкретные шаги для развития
            - Мотивационные техники
            - Практические упражнения
         
-        3. 🌟 Интегральный вывод:
+        3. 🌟 Интегральный вывод (20% текста):
            - Общая картина состояния
            - 3 конкретных действия для улучшения
            - Мотивирующая поддержка
         
-        Пиши максимально полезно, конкретно и вдохновляюще."""
+        4. 📚 ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ ОТ ЭКСПЕРТОВ (20% текста, ВАЖНО!):
+           Подбери для этого человека:
+           - {rec_count} КНИГ на русском языке, которые помогут в развитии по теме "{topic}"
+           - {rec_count} ПРАКТИЧЕСКИХ УПРАЖНЕНИЙ на русском языке
+           - {rec_count} ВИДЕО или КАНАЛОВ на русском языке для саморазвития
+           
+           Все рекомендации должны быть:
+           - Конкретными и полезными
+           - На русском языке
+           - Подходить именно под этот уровень результата ({level})
+           - С кратким пояснением, почему это рекомендовано
+        
+        Пиши максимально полезно, конкретно и вдохновляюще.
+        ВСЕ РЕКОМЕНДАЦИИ ТОЛЬКО НА РУССКОМ ЯЗЫКЕ!"""
         
         response = ask_giga(system, user, max_tokens=4000 if is_paid else 2500)
         
@@ -448,21 +464,73 @@ def get_fallback_analysis(topic, scores, total_questions):
         recommendation = "поддерживать баланс и заниматься профилактикой"
         detail = "Вы демонстрируете высокий уровень психологического благополучия и осознанности."
         emoji = "🌟"
+        level = "высокий"
     elif percentage >= 40:
         status = "удовлетворительное состояние с потенциалом для роста"
         recommendation = "работать над эмоциональным интеллектом и стрессоустойчивостью"
         detail = "У вас хороший фундамент, но есть зоны для развития."
         emoji = "💫"
+        level = "средний"
     else:
         status = "требуется внимание к психологическому состоянию"
         recommendation = "обратиться к психологу и начать практиковать mindfulness"
         detail = "Важно уделить время себе и своему внутреннему состоянию."
         emoji = "🌱"
+        level = "начальный"
+    
+    # Книги по теме
+    books = {
+        "психология": [
+            "1. «Психология влияния» — Роберт Чалдини (о механизмах убеждения)",
+            "2. «Думай медленно... решай быстро» — Даниэль Канеман (о работе мышления)",
+            "3. «Поток» — Михай Чиксентмихайи (о состоянии полного погружения)"
+        ],
+        "отношения": [
+            "1. «Пять языков любви» — Гэри Чепмен (как выражать любовь)",
+            "2. «Искусство любить» — Эрих Фромм (глубокая философия любви)",
+            "3. «Мужчины с Марса, женщины с Венеры» — Джон Грэй (психологические различия)"
+        ],
+        "карьера": [
+            "1. «Джедайские техники» — Максим Дорофеев (эффективная работа)",
+            "2. «Эссенциализм» — Грег МакКеон (искусство делать меньше, но лучше)",
+            "3. «От хорошего к великому» — Джим Коллинз (путь к успеху)"
+        ],
+        "здоровье": [
+            "1. «Почему мы спим» — Мэттью Уокер (научные открытия о сне)",
+            "2. «Еда и мозг» — Дэвид Перлмуттер (влияние питания)",
+            "3. «Исцеление стрессом» — Майкл Грегер (связь стресса и болезней)"
+        ],
+        "финансы": [
+            "1. «Богатый папа, бедный папа» — Роберт Кийосаки (финансовая свобода)",
+            "2. «Самый богатый человек в Вавилоне» — Джордж Клейсон (классические принципы)",
+            "3. «Думай как миллионер» — Т. Харв Экер (психология денег)"
+        ],
+        "личность": [
+            "1. «Атомные привычки» — Джеймс Клир (как создавать привычки)",
+            "2. «Трансерфинг реальности» — Вадим Зеланд (управление реальностью)",
+            "3. «Сила воли» — Келли Макгонигал (тренировка самоконтроля)"
+        ]
+    }
+    
+    topic_books = books.get(topic, books["психология"])
+    
+    exercises = [
+        "1. Практика благодарности: каждый день записывайте 3 вещи, за которые вы благодарны",
+        "2. Дыхательная практика: 5 минут глубокого дыхания утром и вечером",
+        "3. Дневник эмоций: записывайте свои чувства и мысли каждый вечер"
+    ]
+    
+    videos = [
+        "1. TED Talks на русском: «Как перестать беспокоиться и начать жить»",
+        "2. YouTube-канал: «Психология с Анной» (русский язык)",
+        "3. Лекции по саморазвитию на канале «Душевный вечер» (русский язык)"
+    ]
     
     text = f"""🔍 РЕЗУЛЬТАТЫ ТЕСТА
 📌 Тема: {topic.title()}
 
 {emoji} ВАШ РЕЗУЛЬТАТ: {scores} из {max_score} баллов ({percentage}%)
+Уровень: {level}
 
 🧠 АНАЛИЗ КЛИНИЧЕСКОГО ПСИХОЛОГА:
 Ваше состояние характеризуется как {status}.
@@ -472,6 +540,23 @@ def get_fallback_analysis(topic, scores, total_questions):
 💼 РЕКОМЕНДАЦИИ ОТ КОУЧА:
 Для дальнейшего развития {recommendation}.
 Рекомендуем практиковать осознанность и работать над своими целями.
+
+📚 ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ ОТ ЭКСПЕРТОВ:
+
+КНИГИ НА РУССКОМ ЯЗЫКЕ:
+{topic_books[0]}
+{topic_books[1]}
+{topic_books[2]}
+
+УПРАЖНЕНИЯ:
+{exercises[0]}
+{exercises[1]}
+{exercises[2]}
+
+ВИДЕО НА РУССКОМ ЯЗЫКЕ:
+{videos[0]}
+{videos[1]}
+{videos[2]}
 
 🌟 ПРАКТИЧЕСКИЕ ШАГИ ДЛЯ УЛУЧШЕНИЯ:
 1. Начните вести дневник эмоций (5 минут в день)
@@ -645,30 +730,24 @@ def post_to_channel(theme):
 
 # === ЕЖЕДНЕВНЫЙ ТЕСТ В КАНАЛЕ ===
 def post_daily_test():
-    """Отправляет в канал пост с кнопкой для перехода к тесту"""
     try:
-        # Выбираем случайную тему
         topics = list(TEST_TOPICS.keys())
         random.shuffle(topics)
         
         for topic in topics:
             try:
-                # Генерируем вопросы для теста
                 questions = generate_test_questions(topic, 10)
                 
                 if not questions:
                     continue
                 
-                # Сохраняем тест в базу
                 questions_json = json.dumps(questions)
                 c.execute("INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
                           (topic, questions_json, datetime.now().isoformat()))
                 conn.commit()
                 
-                # Получаем ID теста
                 test_id = c.lastrowid
                 
-                # Формируем пост
                 post_text = (
                     f"🧠 **ЕЖЕДНЕВНЫЙ ТЕСТ ДНЯ!**\n\n"
                     f"📌 Тема: **{topic.title()}**\n"
@@ -677,7 +756,6 @@ def post_daily_test():
                     f"Нажмите кнопку ниже, чтобы пройти тест в боте."
                 )
                 
-                # Создаем кнопку для перехода в бота с параметром
                 bot_username = bot.get_me().username
                 markup = telebot.types.InlineKeyboardMarkup()
                 markup.add(telebot.types.InlineKeyboardButton(
@@ -693,7 +771,7 @@ def post_daily_test():
                 )
                 
                 logger.info(f"✅ Ежедневный тест отправлен в канал: {topic}")
-                time.sleep(2)  # Пауза между постами
+                time.sleep(2)
                 
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки теста по теме {topic}: {e}")
@@ -708,31 +786,25 @@ def post_daily_test():
 # === ОБРАБОТЧИК START С ПАРАМЕТРАМИ ===
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    """Обрабатывает /start с параметрами (при переходе из канала)"""
     chat_id = message.chat.id
     
-    # Проверяем есть ли параметр
     if message.text and ' ' in message.text:
         param = message.text.split(' ', 1)[1]
         
         if param.startswith('daily_'):
             try:
-                # Извлекаем тему и ID теста
                 parts = param.split('_')
                 if len(parts) >= 3:
                     topic = parts[1]
                     test_id = int(parts[2])
                     
-                    # Проверяем что тема существует
                     if topic in TEST_TOPICS:
-                        # Достаем тест из базы
                         c.execute("SELECT questions FROM daily_tests WHERE id = ?", (test_id,))
                         row = c.fetchone()
                         
                         if row:
                             questions = json.loads(row[0])
                             
-                            # Запускаем тест
                             bot.send_message(
                                 chat_id,
                                 f"🧠 Вы перешли по ежедневному тесту!\n"
@@ -740,7 +812,6 @@ def handle_start(message):
                                 f"Начинаем тест прямо сейчас!"
                             )
                             
-                            # Сохраняем тест
                             user_test_data[chat_id] = {
                                 'test_id': f"daily_{test_id}",
                                 'topic': topic,
@@ -758,19 +829,17 @@ def handle_start(message):
                             return
                         else:
                             bot.send_message(chat_id, "❌ Тест не найден. Попробуйте начать новый.")
-                            start(message)
+                            start_menu(message)
                             return
             except Exception as e:
                 logger.error(f"❌ Ошибка обработки daily параметра: {e}")
                 bot.send_message(chat_id, "❌ Произошла ошибка. Попробуйте снова.")
-                start(message)
+                start_menu(message)
                 return
     
-    # Если нет параметра или ошибка - показываем главное меню
-    start(message)
+    start_menu(message)
 
-def start(message):
-    """Главное меню"""
+def start_menu(message):
     welcome_text = (
         "🌟 Добро пожаловать в бота Жизнь+!\n\n"
         "Я создан командой лучших психологов и коучей.\n"
@@ -787,58 +856,6 @@ def start(message):
         welcome_text,
         reply_markup=get_main_keyboard()
     )
-
-def start_test_with_topic(chat_id, topic, test_type, count):
-    """Запускает тест по конкретной теме"""
-    try:
-        questions = generate_test_questions(topic, count)
-        
-        if not questions:
-            bot.send_message(chat_id, "❌ Не удалось сгенерировать тест. Попробуйте позже.")
-            return
-        
-        test_id = f"temp_{int(time.time())}_{chat_id}"
-        user_test_data[chat_id] = {
-            'test_id': test_id,
-            'topic': topic,
-            'type': test_type,
-            'questions': questions,
-            'answers': [],
-            'current_q': 0,
-            'scores': [],
-            'total_questions': len(questions),
-            'is_paid': test_type == 'paid',
-            'is_daily': False
-        }
-        
-        send_question(chat_id)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка запуска теста: {e}")
-        bot.send_message(chat_id, "❌ Произошла ошибка. Попробуйте снова.")
-
-# === КНОПКА В КАНАЛЕ ДЛЯ ПЕРЕХОДА ===
-@bot.message_handler(commands=['testlink'])
-def send_test_link(message):
-    """Отправляет ссылки для ежедневных тестов (только для админа)"""
-    if message.chat.id in ADMIN_IDS:
-        topics = list(TEST_TOPICS.keys())
-        text = "📋 Ссылки для ежедневных тестов:\n\n"
-        bot_username = bot.get_me().username
-        for topic in topics:
-            text += f"📌 {topic.title()}: `https://t.me/{bot_username}?start=daily_{topic}_ID`\n"
-        text += "\nВместо ID подставьте ID теста из базы"
-        bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['daily'])
-def manual_daily_test(message):
-    """Ручной запуск ежедневного теста (только для админа)"""
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "📤 Отправляю ежедневные тесты в канал...")
-        if post_daily_test():
-            bot.send_message(message.chat.id, "✅ Ежедневные тесты отправлены в канал!")
-        else:
-            bot.send_message(message.chat.id, "❌ Ошибка отправки. Проверьте логи.")
 
 # === ОСНОВНОЕ МЕНЮ ===
 def get_main_keyboard():
@@ -857,7 +874,7 @@ def get_test_type_keyboard():
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         telebot.types.KeyboardButton('🧠 Бесплатный тест (10 вопр.)'),
-        telebot.types.KeyboardButton('💎 Платный тест (20 вопр.)')
+        telebot.types.KeyboardButton('💎 Платный тест (20 вопр.) — 50 ₽')
     )
     markup.add(
         telebot.types.KeyboardButton('🔙 На главную')
@@ -873,11 +890,14 @@ def show_test_selection(message):
         "• Глубокие психологические вопросы\n"
         "• Развернутый анализ (700+ знаков)\n"
         "• Рекомендации от психолога\n\n"
-        "💎 Платный тест (20 вопросов)\n"
+        "💎 Платный тест (20 вопросов) — 50 ₽\n"
         "• Расширенная диагностика\n"
         "• Глубокий анализ (1400+ знаков)\n"
-        "• Персональные рекомендации\n"
-        "• План развития\n\n"
+        "• Персональные рекомендации от экспертов\n"
+        "• Подбор книг по вашей теме (русский язык)\n"
+        "• Практические упражнения (русский язык)\n"
+        "• Рекомендации видео (русский язык)\n"
+        "• Индивидуально под ваш результат\n\n"
         "Выберите вариант ниже:"
     )
     
@@ -891,9 +911,37 @@ def show_test_selection(message):
 def start_free_test(message):
     show_topic_selection(message, "free", 10)
 
-@bot.message_handler(func=lambda m: m.text == '💎 Платный тест (20 вопр.)')
+@bot.message_handler(func=lambda m: m.text == '💎 Платный тест (20 вопр.) — 50 ₽')
 def start_paid_test(message):
-    show_topic_selection(message, "paid", 20)
+    chat_id = message.chat.id
+    
+    # Проверяем админ ли пользователь
+    if chat_id in ADMIN_IDS:
+        # Админ проходит бесплатно
+        bot.send_message(
+            chat_id,
+            "👑 Вы модератор канала! Платный тест доступен БЕСПЛАТНО."
+        )
+        show_topic_selection(message, "paid_free", 20)
+    else:
+        # Обычный пользователь - платный тест
+        bot.send_message(
+            chat_id,
+            "💎 ПЛАТНЫЙ ТЕСТ — 50 ₽\n\n"
+            "Вы получаете:\n"
+            "✅ 20 глубоких психологических вопросов\n"
+            "✅ Развернутый анализ от психолога и коуча\n"
+            "✅ Персональные рекомендации:\n"
+            "   • Книги на русском языке\n"
+            "   • Практические упражнения\n"
+            "   • Видео на русском языке\n"
+            "✅ Сертификат о прохождении\n\n"
+            "💰 Стоимость: 50 ₽\n\n"
+            "Оплата скоро будет доступна через Telegram Stars.\n"
+            "А пока вы можете пройти БЕСПЛАТНЫЙ тест (10 вопросов)."
+        )
+        # Пока просто отправляем на бесплатный
+        show_topic_selection(message, "free", 10)
 
 def show_topic_selection(message, test_type, count):
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
@@ -907,11 +955,23 @@ def show_topic_selection(message, test_type, count):
     
     markup.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
     
+    if test_type == "paid_free":
+        text = f"🎯 Выберите тему платного теста (БЕСПЛАТНО для модератора):\n\n"
+    else:
+        text = f"🎯 Выберите тему теста:\n\n"
+    
+    text += f"Каждый раз генерируются НОВЫЕ уникальные вопросы!\n\n"
+    text += f"📊 {count} вопросов + развернутый анализ от экспертов"
+    
+    if count == 20:
+        text += f"\n\n💎 Персональные рекомендации на русском языке:\n"
+        text += f"   📚 Книги\n"
+        text += f"   🧘 Упражнения\n"
+        text += f"   🎥 Видео"
+    
     bot.send_message(
         message.chat.id,
-        f"🎯 Выберите тему теста:\n\n"
-        f"Каждый раз генерируются НОВЫЕ уникальные вопросы!\n\n"
-        f"📊 {count} вопросов + развернутый анализ от экспертов",
+        text,
         reply_markup=markup
     )
 
@@ -922,6 +982,9 @@ def handle_topic_selection(call):
         test_type = parts[1]
         topic = parts[2]
         count = int(parts[3]) if len(parts) > 3 else 10
+        
+        # Если paid_free - это платный тест для админа бесплатно
+        is_paid = test_type in ['paid', 'paid_free']
         
         bot.edit_message_text(
             f"🔄 Генерирую НОВЫЙ тест по теме «{topic.title()}»...\n"
@@ -951,7 +1014,7 @@ def handle_topic_selection(call):
             'current_q': 0,
             'scores': [],
             'total_questions': len(questions),
-            'is_paid': test_type == 'paid',
+            'is_paid': is_paid,
             'is_daily': False
         }
         
@@ -1076,13 +1139,13 @@ def finish_test(chat_id):
         )
         
         c.execute("""INSERT INTO user_results 
-                     (user_id, test_id, answers, total_score, topic, ai_analysis, created_at) 
-                     VALUES (?,?,?,?,?,?,?)""",
+                     (user_id, test_id, answers, total_score, topic, ai_analysis, recommendations, created_at) 
+                     VALUES (?,?,?,?,?,?,?,?)""",
                   (chat_id, state['test_id'], answers_str, total_score, 
-                   state['topic'], analysis, datetime.now().isoformat()))
+                   state['topic'], analysis, "", datetime.now().isoformat()))
         conn.commit()
         
-        # Генерируем сертификат
+        # Сертификат
         try:
             user_name = bot.get_chat(chat_id).first_name or "Пользователь"
             cert_path = generate_certificate(user_name, state['topic'], total_score, len(state['questions']))
@@ -1094,7 +1157,7 @@ def finish_test(chat_id):
         except Exception as e:
             logger.error(f"❌ Ошибка отправки сертификата: {e}")
         
-        # Генерируем картинку результата
+        # Картинка результата
         img_path = generate_result_image(total_score, max_score, state['topic'])
         
         result_text = f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}"
@@ -1125,7 +1188,10 @@ def finish_test(chat_id):
             telebot.types.KeyboardButton('📊 Мои результаты')
         )
         markup.add(
-            telebot.types.KeyboardButton('📋 О тестах'),
+            telebot.types.KeyboardButton('📤 Поделиться результатом'),
+            telebot.types.KeyboardButton('📋 О тестах')
+        )
+        markup.add(
             telebot.types.KeyboardButton('❤️ О канале')
         )
         
@@ -1147,6 +1213,51 @@ def finish_test(chat_id):
     
     if chat_id in user_test_data:
         del user_test_data[chat_id]
+
+# === ПОДЕЛИТЬСЯ РЕЗУЛЬТАТОМ ===
+@bot.message_handler(func=lambda m: m.text == '📤 Поделиться результатом')
+def share_result(message):
+    chat_id = message.chat.id
+    
+    c.execute("""SELECT topic, total_score, created_at 
+                 FROM user_results 
+                 WHERE user_id = ? 
+                 ORDER BY created_at DESC 
+                 LIMIT 1""", (chat_id,))
+    
+    result = c.fetchone()
+    
+    if not result:
+        bot.send_message(
+            chat_id,
+            "📭 У вас пока нет результатов для публикации.\n"
+            "Пройдите тест и получите свой результат!",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
+    topic, score, date = result
+    
+    share_text = (
+        f"🌟 Я прошел(ла) тест «{topic.title()}» в боте Жизнь+!\n\n"
+        f"📊 Мой результат: {score} баллов\n\n"
+        f"Хочешь проверить себя? Проходи тест в боте:\n"
+        f"@{bot.get_me().username}\n\n"
+        f"#жизньплюс #психология #саморазвитие"
+    )
+    
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton(
+        "🎯 Пройти тест",
+        url=f"https://t.me/{bot.get_me().username}?start"
+    ))
+    
+    bot.send_message(
+        chat_id,
+        "📤 Вот что можно опубликовать в соцсетях:\n\n"
+        f"{share_text}",
+        reply_markup=markup
+    )
 
 # === ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ ===
 @bot.message_handler(func=lambda m: m.text == '📊 Мои результаты')
@@ -1197,7 +1308,13 @@ def about_tests(message):
         "💼 Коуч — дает практические рекомендации\n\n"
         "🔹 Объем анализа:\n"
         "• Бесплатный тест: 700+ знаков\n"
-        "• Платный тест: 1400+ знаков\n\n"
+        "• Платный тест (50 ₽): 1400+ знаков\n\n"
+        "🔹 Что дает платный тест (50 ₽):\n"
+        "• Персональные рекомендации от психолога и коуча\n"
+        "• 4-6 книг по вашей теме (русский язык)\n"
+        "• 4-6 практических упражнений (русский язык)\n"
+        "• 4-6 рекомендаций видео (русский язык)\n"
+        "• Индивидуально под ваш результат\n\n"
         "🔹 Темы тестов:\n"
         "• Психология — ваше эмоциональное состояние\n"
         "• Отношения — любовь, дружба, семья\n"
@@ -1247,7 +1364,7 @@ def about_channel(message):
 
 @bot.message_handler(func=lambda m: m.text == '🔙 На главную')
 def back_to_main(message):
-    start(message)
+    start_menu(message)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'go_to_test')
 def callback_go_to_test(call):
@@ -1263,6 +1380,18 @@ def callback_cancel(call):
         reply_markup=get_main_keyboard()
     )
 
+# === АДМИН-КОМАНДЫ ===
+@bot.message_handler(commands=['daily'])
+def manual_daily_test(message):
+    if message.chat.id in ADMIN_IDS:
+        bot.send_message(message.chat.id, "📤 Отправляю ежедневные тесты в канал...")
+        if post_daily_test():
+            bot.send_message(message.chat.id, "✅ Ежедневные тесты отправлены в канал!")
+        else:
+            bot.send_message(message.chat.id, "❌ Ошибка отправки. Проверьте логи.")
+    else:
+        bot.send_message(message.chat.id, "⛔ У вас нет прав для этой команды.")
+
 @bot.message_handler(commands=['post'])
 def manual_post(message):
     if message.chat.id in ADMIN_IDS:
@@ -1271,6 +1400,8 @@ def manual_post(message):
             bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
         else:
             bot.send_message(message.chat.id, "❌ Ошибка отправки. Проверьте логи.")
+    else:
+        bot.send_message(message.chat.id, "⛔ У вас нет прав для этой команды.")
 
 @bot.message_handler(commands=['testpost'])
 def test_post(message):
@@ -1309,6 +1440,21 @@ def test_post(message):
                 f"Ошибка: {e}",
                 message.chat.id, msg.message_id
             )
+    else:
+        bot.send_message(message.chat.id, "⛔ У вас нет прав для этой команды.")
+
+@bot.message_handler(commands=['testlink'])
+def send_test_link(message):
+    if message.chat.id in ADMIN_IDS:
+        topics = list(TEST_TOPICS.keys())
+        text = "📋 Ссылки для ежедневных тестов:\n\n"
+        bot_username = bot.get_me().username
+        for topic in topics:
+            text += f"📌 {topic.title()}: `https://t.me/{bot_username}?start=daily_{topic}_ID`\n"
+        text += "\nВместо ID подставьте ID теста из базы"
+        bot.send_message(message.chat.id, text, parse_mode='Markdown')
+    else:
+        bot.send_message(message.chat.id, "⛔ У вас нет прав для этой команды.")
 
 # === ПЛАНИРОВЩИК ===
 scheduler = BackgroundScheduler()
@@ -1323,7 +1469,7 @@ def post_success():
     post_to_channel("финансы и успех")
 
 scheduler.add_job(post_morning, 'cron', hour=8, minute=0)
-scheduler.add_job(post_daily_test_job, 'cron', hour=10, minute=0)  # В 10:00 ежедневные тесты
+scheduler.add_job(post_daily_test_job, 'cron', hour=10, minute=0)
 scheduler.add_job(post_success, 'cron', hour=19, minute=0)
 scheduler.start()
 logger.info("✅ Планировщик запущен")
