@@ -2,4 +2,3 @@ pyTelegramBotAPI
 requests
 flask
 apscheduler
-Pillow
