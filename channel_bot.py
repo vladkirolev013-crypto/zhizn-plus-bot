@@ -13,6 +13,10 @@ import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
+import urllib3
+
+# ОТКЛЮЧАЕМ ПРЕДУПРЕЖДЕНИЯ SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================
 # НАСТРОЙКИ
@@ -54,7 +58,8 @@ def get_giga_token():
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
             json={"scope": "GIGACHAT_API_PERS"},
-            timeout=15
+            timeout=15,
+            verify=False  # <--- ОТКЛЮЧАЕМ SSL
         )
         
         logger.info(f"✅ Токен-сервер ответил: {response.status_code}")
@@ -102,7 +107,8 @@ def ask_giga(system, user, max_tokens=2500):
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
             json=payload,
-            timeout=30
+            timeout=30,
+            verify=False  # <--- ОТКЛЮЧАЕМ SSL
         )
         
         logger.info(f"✅ GigaChat ответил: {response.status_code}")
