@@ -17,7 +17,7 @@ from flask import Flask
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === НАСТРОЙКИ ===
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '8799965983:AAGGPCxN1XvrGnmy2INgEneFkLlKU7oRSe4')
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '8799965983:AAFE5b7noB3TKth3ubn-Hk0OwWQpa0YXdeI')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID', '019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET', '7b92ff4b-a058-4d3e-a1a7-d8cba1a5d661')
@@ -25,7 +25,7 @@ GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET', '7b92ff4b-a058-4d3e-a1
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# === GIGACHAT ПРЯМЫЕ ЗАПРОСЫ ===
+# === GIGACHAT ПРЯМЫЕ ЗАПРОСЫ (ИСПРАВЛЕНО ДЛЯ 415) ===
 def get_giga_token():
     try:
         auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
@@ -35,16 +35,17 @@ def get_giga_token():
             'RqUID': str(uuid.uuid4()),
             'Content-Type': 'application/json'
         }
+        # ИСПРАВЛЕНО: используем data=json.dumps() вместо json=
         response = requests.post(
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
-            json={"scope": "GIGACHAT_API_PERS"},
+            data=json.dumps({"scope": "GIGACHAT_API_PERS"}),
             verify=False,
             timeout=15
         )
         if response.status_code == 200:
             return response.json()['access_token']
-        logger.error(f"Ошибка токена: {response.status_code}")
+        logger.error(f"Ошибка токена: {response.status_code} | {response.text}")
         return None
     except Exception as e:
         logger.error(f"Ошибка получения токена: {e}")
@@ -69,10 +70,11 @@ def ask_giga(system_prompt, user_prompt):
         "max_tokens": 1000
     }
     
+    # ИСПРАВЛЕНО: используем data=json.dumps() вместо json=
     response = requests.post(
         'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
         headers=headers,
-        json=payload,
+        data=json.dumps(payload),
         verify=False,
         timeout=30
     )
@@ -80,10 +82,13 @@ def ask_giga(system_prompt, user_prompt):
     if response.status_code == 200:
         return response.json()['choices'][0]['message']['content']
     else:
-        raise Exception(f"Ошибка GigaChat: {response.status_code}")
+        raise Exception(f"Ошибка GigaChat: {response.status_code} | {response.text}")
 
 # === TELEGRAM BOT ===
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# Сбрасываем вебхук при запуске, чтобы избежать 409
+telebot.apihelper.delete_webhook(BOT_TOKEN)
 
 # === БАЗА ДАННЫХ ===
 DB_PATH = 'channel.db'
@@ -220,4 +225,5 @@ if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info("БОТ ЗАПУЩЕН!")
     logger.info("=" * 50)
-    bot.polling(none_stop=True, interval=1, timeout=60)
+    # Используем infinity_polling для стабильности
+    bot.infinity_polling(timeout=10, long_polling_timeout=10)
