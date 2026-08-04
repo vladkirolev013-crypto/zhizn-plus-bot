@@ -147,54 +147,6 @@ def ask_giga_with_wait(system, user, max_tokens=2500):
     return result
 
 # ============================================
-# ГЕНЕРАЦИЯ КАРТИНКИ ЧЕРЕЗ КАНДИНСКИЙ (ЧЕРЕЗ GIGACHAT API)
-# ============================================
-def generate_kandinsky_image(prompt):
-    try:
-        token = get_giga_token()
-        if not token:
-            return None
-        
-        headers = {
-            'Authorization': f'Bearer {token}',
-            'RqUID': str(uuid.uuid4()),
-            'Content-Type': 'application/json'
-        }
-        payload = {
-            "model": "Kandinsky",
-            "prompt": prompt,
-            "num_images": 1,
-            "width": 1024,
-            "height": 1024,
-            "style": "photo-realistic"
-        }
-        
-        response = requests.post(
-            'https://gigachat.devices.sberbank.ru/api/v1/images/generations',
-            headers=headers,
-            json=payload,
-            timeout=60,
-            verify=False
-        )
-        
-        if response.status_code != 200:
-            logger.error(f"❌ Кандинский ошибка: {response.status_code}")
-            logger.error(f"❌ Текст: {response.text[:500]}")
-            return None
-        
-        image_url = response.json()['data'][0]['url']
-        img = requests.get(image_url, timeout=30).content
-        filename = f'/tmp/kandinsky_{int(time.time())}.jpg'
-        with open(filename, 'wb') as f:
-            f.write(img)
-        
-        return filename
-        
-    except Exception as e:
-        logger.error(f"❌ Кандинский ошибка: {e}")
-        return None
-
-# ============================================
 # TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -232,11 +184,21 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# ГЕНЕРАТОР ТЕСТОВ
+# НОВЫЕ ПРОМПТЫ ДЛЯ ВОПРОСОВ
 # ============================================
 def generate_test_questions(topic, count=10):
-    system = "Ты — психолог. Составь вопросы для теста в формате JSON."
-    user = f"""Составь {count} вопросов на тему "{topic}".
+    system = """Ты — профессиональный психолог с 25-летним стажем, автор бестселлеров.
+Ты составляешь вопросы, которые заставляют человека заглянуть в себя.
+Вопросы должны быть:
+- Глубокими, небанальными, без штампов
+- Затрагивать личность, внутренние конфликты, жизненные стратегии
+- Идти от простого к сложному
+- Вызывать эмоциональный отклик
+- Каждый вопрос — как маленькая встреча с собой
+- Вопросы НЕ повторяются
+"""
+    
+    user = f"""Составь {count} глубоких психологических вопросов на тему "{topic}".
 
     Формат ответа (строгий JSON):
     [
@@ -309,27 +271,62 @@ def generate_test_questions(topic, count=10):
         return None
 
 # ============================================
-# ГЕНЕРАТОР АНАЛИЗА
+# НОВЫЙ АНАЛИЗ: ПСИХОЛОГ + КОУЧ
 # ============================================
 def generate_analysis(topic, answers, score, total, is_paid):
-    min_len = 1400 if is_paid else 700
-
     if is_paid:
-        system = """Ты — команда из двух экспертов:
-1. ПСИХОЛОГ — мягкий, понимающий, глубокий
-2. КОУЧ — бодрый, энергичный, направляющий
+        min_len = 1400
+        system = """Ты — команда из двух экспертов мирового уровня:
 
-Объедините свои голоса в один анализ. ВКЛЮЧИ в него:
-- Книги
-- Упражнения
-- Видео
+1. КЛИНИЧЕСКИЙ ПСИХОЛОГ (25 лет, доктор наук):
+   - Делает глубочайший разбор личности
+   - Вскрывает внутренние конфликты и сценарии
+   - Даёт честную, профессиональную обратную связь
+   - Пишет как на сессии: глубоко, тепло, без иллюзий
+
+2. КОУЧ МИРОВОГО УРОВНЯ (автор бестселлеров):
+   - Даёт конкретные, жёсткие, но вдохновляющие рекомендации
+   - Ставит вызов, от которого невозможно отказаться
+   - Предлагает упражнения, книги, видео, стратегию на неделю
+   - Помогает перевести инсайты в действия
+
+Объём: 1400+ знаков.
 ВСЁ НА РУССКОМ ЯЗЫКЕ."""
-    else:
-        system = """Ты — психолог. Дай глубокий анализ личности.
-НЕ ДАВАЙ рекомендаций по книгам, видео или упражнениям.
-Только описание состояния, выводы и общие рекомендации без конкретных материалов."""
+        
+        user = f"""Тема: {topic}
+Ответы: {answers}
+Баллы: {score} из {total}
 
-    user = f"Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}. Напиши анализ (минимум {min_len} знаков)."
+Проведи полный разбор личности и дай мощные рекомендации.
+Включи:
+- Глубокий психологический портрет
+- 2 инсайта, которые человек не замечал
+- Конкретные шаги на неделю
+- Книги, упражнения, видео (ВСЁ НА РУССКОМ)
+- Мотивирующий вызов от коуча
+"""
+    else:
+        min_len = 700
+        system = """Ты — лучший клинический психолог в мире.
+Ты проводишь глубокий, честный, профессиональный разбор личности на основе ответов.
+Твой стиль:
+- Без воды, без штампов
+- Тёплый, но прямой
+- Ты видишь то, что человек не замечает в себе
+- Даёшь точные формулировки: «Ты боишься, потому что...», «Твой сценарий — это...»
+- Добавляешь 1 метафору, которая запоминается
+- Завершаешь 2 конкретными вопросами для размышления
+- Объём: 700+ знаков
+"""
+        
+        user = f"""Тема: {topic}
+Ответы: {answers}
+Баллы: {score} из {total}
+
+Проведи глубокий разбор личности.
+Дай 2 инсайта и 2 вопроса для размышления.
+БЕЗ книг, упражнений и видео.
+"""
     
     logger.info("📤 Генерирую анализ...")
     response = ask_giga_with_wait(system, user, max_tokens=3000 if is_paid else 2000)
@@ -428,7 +425,7 @@ def get_main_menu(chat_id):
 def admin_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('📤 Отправить пост', '🧠 Тест в канал')
-    mk.add('🖼 Картинка в канал', '📊 Статистика')
+    mk.add('📊 Статистика')
     mk.add('👑 Главное меню')
     return mk
 
@@ -708,33 +705,6 @@ def admin_post(message):
     bot.send_message(CHANNEL_ID, text)
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
-@bot.message_handler(func=lambda m: m.text == '🖼 Картинка в канал')
-def admin_image(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    
-    bot.send_message(message.chat.id, "🖼 Генерация картинки через Кандинский...\n⏳ До 30 секунд.")
-    
-    # Генерируем промпт для картинки
-    prompts = [
-        "красивый пейзаж, вдохновение, счастье, позитив, энергия",
-        "улыбающаяся девушка в поле цветов, солнечный свет, радость",
-        "горы и озеро на закате, спокойствие, гармония",
-        "город на рассвете, новые возможности, оптимизм",
-        "лес и луч солнца, пробуждение, новая жизнь"
-    ]
-    prompt = random.choice(prompts)
-    
-    img_path = generate_kandinsky_image(prompt)
-    
-    if img_path:
-        with open(img_path, 'rb') as photo:
-            bot.send_photo(CHANNEL_ID, photo)
-        os.remove(img_path)
-        bot.send_message(message.chat.id, "✅ Картинка отправлена в канал!")
-    else:
-        bot.send_message(message.chat.id, "❌ Кандинский не ответил. Попробуй ещё раз.")
-
 @bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
 def admin_test_to_channel(message):
     if message.chat.id not in ADMIN_IDS:
@@ -874,46 +844,4 @@ def cmd_daily(message):
 
 @bot.message_handler(commands=['post'])
 def cmd_post(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    
-    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
-    text = generate_post()
-    
-    if not text:
-        bot.send_message(message.chat.id, "❌ Не удалось сгенерировать пост.")
-        return
-    
-    bot.send_message(CHANNEL_ID, text)
-    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
-
-# ============================================
-# ПЛАНИРОВЩИК
-# ============================================
-scheduler = BackgroundScheduler()
-
-def schedule_morning():
-    text = generate_post()
-    if text:
-        bot.send_message(CHANNEL_ID, text)
-
-def schedule_daily():
-    post_daily_test()
-
-def schedule_evening():
-    text = generate_post()
-    if text:
-        bot.send_message(CHANNEL_ID, text)
-
-scheduler.add_job(schedule_morning, 'cron', hour=8, minute=0)
-scheduler.add_job(schedule_daily, 'cron', hour=10, minute=0)
-scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
-scheduler.start()
-
-# ============================================
-# ЗАПУСК
-# ============================================
-if __name__ == '__main__':
-    logger.info("🚀 БОТ ЗАПУЩЕН")
-    logger.info("✅ Готов к работе!")
-    bot.polling(none_stop=True)
+    if
