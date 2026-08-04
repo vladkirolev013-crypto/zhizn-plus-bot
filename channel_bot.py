@@ -21,8 +21,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
-GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
-GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
+
+# НОВЫЕ КЛЮЧИ (ТВОИ)
+GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
+GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjY1ZmQ5MTY5LTU5YzItNDVlMi1hNGU5LTkzMzE3NTczZTJiNw=="
 
 ADMIN_IDS = [8746212340]
 
@@ -75,11 +77,13 @@ def get_giga_token():
         
         if response.status_code != 200:
             logger.error(f"Ошибка токена: {response.status_code}")
+            logger.error(f"Текст: {response.text[:200]}")
             return None
             
         token = response.json()['access_token']
         giga_token_cache["token"] = token
         giga_token_cache["expires"] = time.time() + 3500
+        logger.info("✅ Токен GigaChat получен")
         return token
         
     except Exception as e:
@@ -184,7 +188,7 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# НОВЫЕ ПРОМПТЫ ДЛЯ ВОПРОСОВ
+# ГЕНЕРАТОР ВОПРОСОВ
 # ============================================
 def generate_test_questions(topic, count=10):
     system = """Ты — профессиональный психолог с 25-летним стажем, автор бестселлеров.
@@ -271,7 +275,7 @@ def generate_test_questions(topic, count=10):
         return None
 
 # ============================================
-# НОВЫЙ АНАЛИЗ: ПСИХОЛОГ + КОУЧ
+# ГЕНЕРАТОР АНАЛИЗА
 # ============================================
 def generate_analysis(topic, answers, score, total, is_paid):
     if is_paid:
