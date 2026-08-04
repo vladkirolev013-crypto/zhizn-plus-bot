@@ -212,7 +212,7 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# ПРОМПТЫ
+# ГЕНЕРАТОРЫ
 # ============================================
 def generate_test_questions(topic, count=10):
     system = """Ты — клинический психолог. Составь глубокие вопросы без штампов.
@@ -943,6 +943,7 @@ def admin_stats(message):
 # ЕЖЕДНЕВНЫЙ ТЕСТ
 # ============================================
 def post_daily_test():
+    logger.info("⏳ Запуск ежедневного теста...")
     topics = list(TEST_TOPICS.keys())
     random.shuffle(topics)
     topic = topics[0]
@@ -970,6 +971,9 @@ def post_daily_test():
             f"Проверьте себя прямо сейчас!",
             reply_markup=mk
         )
+        logger.info("✅ Ежедневный тест отправлен в канал")
+    else:
+        logger.error("❌ Не удалось сгенерировать ежедневный тест")
 
 # ============================================
 # АДМИН-КОМАНДЫ
@@ -998,28 +1002,37 @@ def cmd_post(message):
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
-# ПЛАНИРОВЩИК (ТВОЁ ВРЕМЯ — ЮРГА, UTC+7)
+# ПЛАНИРОВЩИК (12:10, 14:10, 18:10 по Юрге)
 # ============================================
 scheduler = BackgroundScheduler()
 
 def schedule_morning():
+    logger.info("⏳ Запуск утреннего поста...")
     text = generate_post()
     if text:
         bot.send_message(CHANNEL_ID, text)
+        logger.info("✅ Утренний пост отправлен")
+    else:
+        logger.error("❌ Не удалось сгенерировать утренний пост")
 
 def schedule_daily():
     post_daily_test()
 
 def schedule_evening():
+    logger.info("⏳ Запуск вечернего поста...")
     text = generate_post()
     if text:
         bot.send_message(CHANNEL_ID, text)
+        logger.info("✅ Вечерний пост отправлен")
+    else:
+        logger.error("❌ Не удалось сгенерировать вечерний пост")
 
-# ТВОЁ РАСПИСАНИЕ: 10:00, 12:00, 16:00 ПО ЮРГЕ
-scheduler.add_job(schedule_morning, 'cron', hour=10, minute=0)
-scheduler.add_job(schedule_daily, 'cron', hour=12, minute=0)
-scheduler.add_job(schedule_evening, 'cron', hour=16, minute=0)
+# ТВОЁ РАСПИСАНИЕ: 12:10, 14:10, 18:10 ПО ЮРГЕ
+scheduler.add_job(schedule_morning, 'cron', hour=12, minute=10)
+scheduler.add_job(schedule_daily, 'cron', hour=14, minute=10)
+scheduler.add_job(schedule_evening, 'cron', hour=18, minute=10)
 scheduler.start()
+logger.info("✅ Планировщик запущен")
 
 # ============================================
 # ЗАПУСК
