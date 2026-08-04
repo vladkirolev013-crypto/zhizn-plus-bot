@@ -356,14 +356,14 @@ def admin_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('📤 Отправить пост', '🧠 Тест в канал')
     mk.add('🖼 Картинка в канал', '📊 Статистика')
-    mk.add('🚀 Старт')
+    mk.add('👑 Главное меню')
     return mk
 
 def test_type_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🧠 Бесплатный (10 вопросов)')
     mk.add('💎 Платный (20 вопросов)')
-    mk.add('🔙 Главное меню')
+    mk.add('🔙 Назад')
     return mk
 
 # ============================================
@@ -401,13 +401,15 @@ def start(message):
     
     welcome = "🌟 Добро пожаловать в бота Жизнь+!\n\nНажми «🎯 Пройти тест» или «❤️ О канале»."
     
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, welcome, reply_markup=admin_menu())
-    else:
-        bot.send_message(message.chat.id, welcome, reply_markup=main_menu())
+    # Всегда показываем главное меню
+    bot.send_message(message.chat.id, welcome, reply_markup=main_menu())
 
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
 def start_button(message):
+    start(message)
+
+@bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
+def back_to_main_from_admin(message):
     start(message)
 
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
@@ -436,8 +438,8 @@ def choose_test_type(message):
         reply_markup=test_type_menu()
     )
 
-@bot.message_handler(func=lambda m: m.text == '🔙 Главное меню')
-def back_to_main(message):
+@bot.message_handler(func=lambda m: m.text == '🔙 Назад')
+def back_to_main_from_test(message):
     start(message)
 
 @bot.message_handler(func=lambda m: m.text == '🧠 Бесплатный (10 вопросов)')
@@ -611,8 +613,14 @@ def finish_test(chat_id):
     bot.send_message(chat_id, "✨ Готово!", reply_markup=main_menu())
 
 # ============================================
-# АДМИН-КНОПКИ
+# АДМИН-КНОПКИ (ВИДНЫ ТОЛЬКО АДМИНУ)
 # ============================================
+@bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
+def admin_panel(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
+
 @bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
 def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
@@ -667,12 +675,12 @@ def admin_test_topic_callback(c):
             )
             return
         
-        c.execute(
+        conn.execute(
             "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
             (topic, json.dumps(questions), datetime.now().isoformat())
         )
         conn.commit()
-        test_id = c.lastrowid
+        test_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton(
