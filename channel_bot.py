@@ -36,7 +36,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# GIGACHAT (УПРОЩЁННАЯ ВЕРСИЯ)
+# GIGACHAT (ИСПРАВЛЕННАЯ АВТОРИЗАЦИЯ)
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -47,23 +47,26 @@ def get_giga_token():
     try:
         logger.info("🔄 Получаю токен...")
         
-        # ПРОСТОЙ СПОСОБ: БЕЗ ЛИШНИХ ПРОВЕРОК
-        url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+        # ФОРМИРУЕМ BASE64 ИЗ CLIENT_ID И CLIENT_SECRET
+        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
+        # ВАЖНО: используем 'ascii', чтобы избежать проблем с кодировкой
+        base64_auth = base64.b64encode(auth_string.encode('ascii')).decode('ascii')
+        
+        # УБИРАЕМ ВСЕ ПРОБЕЛЫ И ПЕРЕНОСЫ (на всякий случай)
+        base64_auth = base64_auth.strip()
+        
+        logger.info(f"🔑 Base64 (первые 20 символов): {base64_auth[:20]}...")
+        
         headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-            'RqUID': str(uuid.uuid4())
+            'Authorization': f'Basic {base64_auth}',
+            'RqUID': str(uuid.uuid4()),
+            'Content-Type': 'application/x-www-form-urlencoded'
         }
         
-        # ПЕРЕДАЁМ CLIENT ID И SECRET ЧЕРЕЗ BASIC AUTH (СТАНДАРТ)
-        auth = (GIGA_CLIENT_ID, GIGA_CLIENT_SECRET)
-        data = {'scope': 'GIGACHAT_API_PERS'}
-        
         response = requests.post(
-            url,
+            'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
-            auth=auth,  # <--- ПРОСТОЙ BASIC AUTH
-            data=data,
+            data='scope=GIGACHAT_API_PERS',
             timeout=20,
             verify=False
         )
