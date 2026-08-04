@@ -36,7 +36,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# GIGACHAT
+# GIGACHAT (УПРОЩЁННАЯ ВЕРСИЯ)
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -46,21 +46,24 @@ def get_giga_token():
     
     try:
         logger.info("🔄 Получаю токен...")
-        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
         
-        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('ascii')
-        logger.info(f"🔑 Base64: {base64_auth[:20]}...")
-        
+        # ПРОСТОЙ СПОСОБ: БЕЗ ЛИШНИХ ПРОВЕРОК
+        url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         headers = {
-            'Authorization': f'Basic {base64_auth}',
-            'RqUID': str(uuid.uuid4()),
-            'Content-Type': 'application/x-www-form-urlencoded'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'RqUID': str(uuid.uuid4())
         }
         
+        # ПЕРЕДАЁМ CLIENT ID И SECRET ЧЕРЕЗ BASIC AUTH (СТАНДАРТ)
+        auth = (GIGA_CLIENT_ID, GIGA_CLIENT_SECRET)
+        data = {'scope': 'GIGACHAT_API_PERS'}
+        
         response = requests.post(
-            'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
+            url,
             headers=headers,
-            data='scope=GIGACHAT_API_PERS',
+            auth=auth,  # <--- ПРОСТОЙ BASIC AUTH
+            data=data,
             timeout=20,
             verify=False
         )
@@ -68,7 +71,7 @@ def get_giga_token():
         logger.info(f"✅ Статус токена: {response.status_code}")
         
         if response.status_code != 200:
-            logger.error(f"❌ Ошибка токена: {response.text[:200]}")
+            logger.error(f"❌ Ошибка: {response.text[:200]}")
             return None
             
         token = response.json().get('access_token')
@@ -82,7 +85,7 @@ def get_giga_token():
         return token
         
     except Exception as e:
-        logger.error(f"❌ Ошибка токена: {e}")
+        logger.error(f"❌ Ошибка: {e}")
         return None
 
 def ask_giga(system, user, max_tokens=2500):
@@ -749,7 +752,14 @@ scheduler.start()
 # ЗАПУСК
 # ============================================
 if __name__ == '__main__':
-    # Устанавливаем вебхук
+    # Удаляем старый вебхук
+    try:
+        bot.delete_webhook()
+        logger.info("✅ Старый вебхук удалён")
+    except:
+        pass
+    
+    # Устанавливаем новый
     try:
         bot.set_webhook(url=WEBHOOK_URL)
         logger.info(f"✅ Вебхук установлен: {WEBHOOK_URL}")
