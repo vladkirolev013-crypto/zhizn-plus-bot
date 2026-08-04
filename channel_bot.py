@@ -23,7 +23,6 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL', 'https://zhizn-plus-bot.onrender.com') + '/webhook'
 
-# КЛЮЧИ — БЕЗ ДВОЙНОГО КОДИРОВАНИЯ
 GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
 GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOmY3NjZhOGZjLWUwNTItNGYwZC05NDQwLTUxNzJjNGYyOWE4NQ=="
 
@@ -36,7 +35,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# БАЗА ДАННЫХ (С ТАЙМАУТОМ)
+# БАЗА ДАННЫХ
 # ============================================
 DB_PATH = 'channel.db'
 conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
@@ -63,7 +62,8 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_sessions
               current_q INTEGER, 
               answers TEXT, 
               scores TEXT, 
-              is_paid INTEGER)''')
+              is_paid INTEGER, 
+              result TEXT)''')
 conn.commit()
 
 # ============================================
@@ -159,7 +159,7 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# НОВЫЕ ПРОМПТЫ С НЛП (БЕЗ СЛАЩАВОСТИ)
+# ПРОМПТЫ
 # ============================================
 def generate_test_questions(topic, count=10):
     system = """Ты — клинический психолог, который не задаёт вопросов «как вы оцениваете...». Ты задаёшь вопросы, которые человек запоминает.
@@ -314,10 +314,10 @@ def generate_post():
     return response
 
 # ============================================
-# РАБОТА С СЕССИЯМИ В SQLITE
+# РАБОТА С СЕССИЯМИ И РЕЗУЛЬТАТАМИ
 # ============================================
 def load_session(chat_id):
-    c.execute("SELECT topic, questions, current_q, answers, scores, is_paid FROM user_sessions WHERE chat_id=?", (chat_id,))
+    c.execute("SELECT topic, questions, current_q, answers, scores, is_paid, result FROM user_sessions WHERE chat_id=?", (chat_id,))
     row = c.fetchone()
     if row:
         return {
@@ -326,17 +326,19 @@ def load_session(chat_id):
             'current_q': row[2],
             'answers': json.loads(row[3]) if row[3] else [],
             'scores': json.loads(row[4]) if row[4] else [],
-            'is_paid': bool(row[5])
+            'is_paid': bool(row[5]),
+            'result': row[6]
         }
     return None
 
 def save_session(chat_id, session):
     c.execute("""INSERT OR REPLACE INTO user_sessions 
-                 (chat_id, topic, questions, current_q, answers, scores, is_paid) 
-                 VALUES (?,?,?,?,?,?,?)""",
+                 (chat_id, topic, questions, current_q, answers, scores, is_paid, result) 
+                 VALUES (?,?,?,?,?,?,?,?)""",
               (chat_id, session['topic'], json.dumps(session['questions']), 
                session['current_q'], json.dumps(session['answers']), 
-               json.dumps(session['scores']), int(session['is_paid'])))
+               json.dumps(session['scores']), int(session['is_paid']), 
+               session.get('result', '')))
     conn.commit()
 
 def delete_session(chat_id):
@@ -344,7 +346,7 @@ def delete_session(chat_id):
     conn.commit()
 
 # ============================================
-# FLASK ПРИЛОЖЕНИЕ (ВЕБХУК)
+# FLASK
 # ============================================
 app = Flask(__name__)
 
@@ -538,7 +540,7 @@ def cancel_callback(c):
     bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
 
 # ============================================
-# ПРОХОЖДЕНИЕ ТЕСТА
+# ПРОХОЖДЕНИЕ ТЕСТА + ЗАЩИТА ОТ ПОТЕРИ РЕЗУЛЬТАТА
 # ============================================
 def send_question(chat_id):
     session = load_session(chat_id)
@@ -593,7 +595,7 @@ def handle_answer(message):
     send_question(chat_id)
 
 # ============================================
-# ЗАВЕРШЕНИЕ ТЕСТА
+# ЗАВЕРШЕНИЕ ТЕСТА С ЗАЩИТОЙ
 # ============================================
 def finish_test(chat_id):
     session = load_session(chat_id)
@@ -604,6 +606,11 @@ def finish_test(chat_id):
     total = len(session['questions']) * 3
     answers = ', '.join(session['answers'])
     is_paid = session.get('is_paid', False)
+    
+    # СОХРАНЯЕМ БАЗОВЫЙ РЕЗУЛЬТАТ СРАЗУ
+    basic_result = f"Тема: {session['topic']}\nРезультат: {score} из {total}\nОтветы: {answers}"
+    session['result'] = basic_result
+    save_session(chat_id, session)
     
     if is_paid:
         c.execute("UPDATE stats SET paid_count = paid_count + 1")
@@ -618,20 +625,88 @@ def finish_test(chat_id):
         f"⏳ GigaChat генерирует анализ...\nДо 30 секунд."
     )
     
-    analysis = generate_analysis(session['topic'], answers, score, len(session['questions']), is_paid)
-    if not analysis:
-        bot.send_message(chat_id, "❌ Не удалось сгенерировать анализ. Попробуйте позже.")
-        delete_session(chat_id)
-        return
+    # ГЕНЕРИРУЕМ АНАЛИЗ С ПОВТОРНЫМИ ПОПЫТКАМИ
+    analysis = None
+    for attempt in range(3):  # 3 попытки
+        analysis = generate_analysis(session['topic'], answers, score, len(session['questions']), is_paid)
+        if analysis:
+            break
+        time.sleep(2)  # Пауза перед повторной попыткой
+        bot.send_message(chat_id, f"🔄 Попытка {attempt + 2}/3...")
     
-    bot.send_message(
-        chat_id,
-        f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}",
-        reply_markup=get_main_menu(chat_id)
-    )
+    if analysis:
+        # Обновляем результат в базе
+        session['result'] = f"{basic_result}\n\n🔍 {analysis}"
+        save_session(chat_id, session)
+        
+        bot.send_message(
+            chat_id,
+            f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}",
+            reply_markup=get_main_menu(chat_id)
+        )
+    else:
+        bot.send_message(
+            chat_id,
+            f"❌ GigaChat временно не отвечает.\n\n"
+            f"✅ Ваш результат сохранён:\n{basic_result}\n\n"
+            f"Нажмите кнопку «📊 Получить анализ» позже — мы повторим запрос.",
+            reply_markup=get_result_menu(chat_id)
+        )
     
     delete_session(chat_id)
-    bot.send_message(chat_id, "✨ Готово!", reply_markup=get_main_menu(chat_id))
+
+# ============================================
+# КНОПКА ДЛЯ ПОВТОРНОГО ЗАПРОСА АНАЛИЗА
+# ============================================
+def get_result_menu(chat_id):
+    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    mk.add('📊 Получить анализ')
+    mk.add('🎯 Пройти тест')
+    mk.add('❤️ О канале')
+    return mk
+
+@bot.message_handler(func=lambda m: m.text == '📊 Получить анализ')
+def retry_analysis(message):
+    chat_id = message.chat.id
+    session = load_session(chat_id)
+    
+    if not session or not session.get('result'):
+        bot.send_message(chat_id, "❌ Нет сохранённых результатов. Пройдите тест сначала.")
+        return
+    
+    if '🔍' in session['result']:
+        bot.send_message(chat_id, "✅ Анализ уже был сгенерирован.\n\n" + session['result'])
+        return
+    
+    # Парсим базовый результат
+    lines = session['result'].split('\n')
+    topic = lines[0].replace('Тема: ', '')
+    score_line = lines[1].replace('Результат: ', '')
+    score = int(score_line.split(' из ')[0])
+    total = int(score_line.split(' из ')[1].split(' ')[0])
+    answers_line = lines[2].replace('Ответы: ', '')
+    answers = answers_line
+    
+    is_paid = session.get('is_paid', False)
+    
+    bot.send_message(chat_id, "⏳ Повторная генерация анализа...\nДо 30 секунд.")
+    
+    analysis = generate_analysis(topic, answers, score, len(session['questions']), is_paid)
+    
+    if analysis:
+        session['result'] = f"Тема: {topic}\nРезультат: {score} из {total}\nОтветы: {answers}\n\n🔍 {analysis}"
+        save_session(chat_id, session)
+        bot.send_message(
+            chat_id,
+            f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}",
+            reply_markup=get_main_menu(chat_id)
+        )
+    else:
+        bot.send_message(
+            chat_id,
+            "❌ GigaChat снова не отвечает. Попробуйте позже через ту же кнопку.",
+            reply_markup=get_result_menu(chat_id)
+        )
 
 # ============================================
 # АДМИН-КНОПКИ
@@ -818,7 +893,7 @@ scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
 scheduler.start()
 
 # ============================================
-# ЗАПУСК (ВЕБХУК)
+# ЗАПУСК
 # ============================================
 if __name__ == '__main__':
     try:
