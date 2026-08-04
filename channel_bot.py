@@ -23,6 +23,7 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL', 'https://zhizn-plus-bot.onrender.com') + '/webhook'
 
+# ТВОИ КЛЮЧИ
 GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
 GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjY1ZmQ5MTY5LTU5YzItNDVlMi1hNGU5LTkzMzE3NTczZTJiNw=="
 
@@ -46,7 +47,9 @@ def get_giga_token():
     try:
         logger.info("🔄 Получаю токен...")
         auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
-        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+        
+        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('ascii')
+        logger.info(f"🔑 Base64: {base64_auth[:20]}...")
         
         headers = {
             'Authorization': f'Basic {base64_auth}',
@@ -65,7 +68,7 @@ def get_giga_token():
         logger.info(f"✅ Статус токена: {response.status_code}")
         
         if response.status_code != 200:
-            logger.error(f"❌ Ошибка токена: {response.text}")
+            logger.error(f"❌ Ошибка токена: {response.text[:200]}")
             return None
             
         token = response.json().get('access_token')
@@ -104,7 +107,6 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
-        logger.info("📤 Отправляю запрос в GigaChat...")
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -116,7 +118,7 @@ def ask_giga(system, user, max_tokens=2500):
         logger.info(f"✅ GigaChat ответил: {response.status_code}")
         
         if response.status_code != 200:
-            logger.error(f"❌ Текст ошибки: {response.text[:500]}")
+            logger.error(f"❌ Ошибка: {response.text[:500]}")
             return None
         
         content = response.json()['choices'][0]['message']['content']
@@ -134,7 +136,6 @@ def ask_giga_with_wait(system, user, max_tokens=2500):
     
     if elapsed < 40:
         wait_time = 40 - elapsed
-        logger.info(f"⏳ Ждём {wait_time:.1f} секунд")
         time.sleep(wait_time)
     
     return result
@@ -143,13 +144,6 @@ def ask_giga_with_wait(system, user, max_tokens=2500):
 # TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# Удаляем старый вебхук
-try:
-    bot.delete_webhook()
-    logger.info("✅ Вебхук удалён")
-except:
-    pass
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -287,7 +281,7 @@ def generate_post():
     return response
 
 # ============================================
-# FLASK ПРИЛОЖЕНИЕ (ВЕБХУК)
+# FLASK ПРИЛОЖЕНИЕ
 # ============================================
 app = Flask(__name__)
 
@@ -308,15 +302,6 @@ def webhook():
         return '', 200
     else:
         return '', 403
-
-@app.route('/set_webhook', methods=['GET'])
-def set_webhook():
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
-        response = requests.get(url)
-        return response.text
-    except Exception as e:
-        return str(e)
 
 # ============================================
 # МЕНЮ
@@ -342,6 +327,11 @@ def test_type_menu():
     mk.add('💎 Платный (20 вопросов)')
     mk.add('🔙 Назад')
     return mk
+
+# ============================================
+# СОСТОЯНИЯ
+# ============================================
+sessions = {}
 
 # ============================================
 # ОБРАБОТЧИКИ
@@ -482,11 +472,6 @@ def topic_callback(c):
 def cancel_callback(c):
     bot.delete_message(c.message.chat.id, c.message.message_id)
     bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
-
-# ============================================
-# СОСТОЯНИЯ
-# ============================================
-sessions = {}
 
 # ============================================
 # ПРОХОЖДЕНИЕ ТЕСТА
@@ -761,7 +746,7 @@ scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
 scheduler.start()
 
 # ============================================
-# ЗАПУСК (ВЕБХУК)
+# ЗАПУСК
 # ============================================
 if __name__ == '__main__':
     # Устанавливаем вебхук
@@ -771,6 +756,5 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"❌ Ошибка установки вебхука: {e}")
     
-    # Запускаем Flask
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
