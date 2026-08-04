@@ -1002,7 +1002,7 @@ def cmd_post(message):
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
-# ПЛАНИРОВЩИК (12:10, 14:10, 18:10 по Юрге)
+# ПЛАНИРОВЩИК (12:20, 14:20, 18:20 по Юрге)
 # ============================================
 scheduler = BackgroundScheduler()
 
@@ -1027,10 +1027,10 @@ def schedule_evening():
     else:
         logger.error("❌ Не удалось сгенерировать вечерний пост")
 
-# ТВОЁ РАСПИСАНИЕ: 12:10, 14:10, 18:10 ПО ЮРГЕ
-scheduler.add_job(schedule_morning, 'cron', hour=12, minute=10)
-scheduler.add_job(schedule_daily, 'cron', hour=14, minute=10)
-scheduler.add_job(schedule_evening, 'cron', hour=18, minute=10)
+# ТВОЁ РАСПИСАНИЕ: 12:20, 14:20, 18:20 ПО ЮРГЕ
+scheduler.add_job(schedule_morning, 'cron', hour=12, minute=20)
+scheduler.add_job(schedule_daily, 'cron', hour=14, minute=20)
+scheduler.add_job(schedule_evening, 'cron', hour=18, minute=20)
 scheduler.start()
 logger.info("✅ Планировщик запущен")
 
