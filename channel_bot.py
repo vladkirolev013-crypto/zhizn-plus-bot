@@ -11,21 +11,18 @@ import base64
 import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask, request
+from flask import Flask
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================
-# НАСТРОЙКИ
+# НАСТРОЙКИ (ТВОИ НОВЫЕ КЛЮЧИ)
 # ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
-WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL', 'https://zhizn-plus-bot.onrender.com') + '/webhook'
-
-# ТВОИ КЛЮЧИ
 GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
-GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjY1ZmQ5MTY5LTU5YzItNDVlMi1hNGU5LTkzMzE3NTczZTJiNw=="
+GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOmY3NjZhOGZjLWUwNTItNGYwZC05NDQwLTUxNzJjNGYyOWE4NQ=="
 
 ADMIN_IDS = [8746212340]
 
@@ -36,7 +33,23 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# GIGACHAT (ИСПРАВЛЕННАЯ АВТОРИЗАЦИЯ)
+# АНТИДОД 409
+# ============================================
+def kill_webhook():
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        response = requests.post(url, json={"drop_pending_updates": True})
+        logger.info(f"🧹 Удаление вебхука: {response.text}")
+        return response.json().get('ok', False)
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления вебхука: {e}")
+        return False
+
+kill_webhook()
+time.sleep(2)
+
+# ============================================
+# GIGACHAT
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -45,56 +58,38 @@ def get_giga_token():
         return giga_token_cache["token"]
     
     try:
-        logger.info("🔄 Получаю токен...")
-        
-        # ФОРМИРУЕМ BASE64 ИЗ CLIENT_ID И CLIENT_SECRET
         auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
-        # ВАЖНО: используем 'ascii', чтобы избежать проблем с кодировкой
-        base64_auth = base64.b64encode(auth_string.encode('ascii')).decode('ascii')
-        
-        # УБИРАЕМ ВСЕ ПРОБЕЛЫ И ПЕРЕНОСЫ (на всякий случай)
-        base64_auth = base64_auth.strip()
-        
-        logger.info(f"🔑 Base64 (первые 20 символов): {base64_auth[:20]}...")
-        
+        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
         headers = {
             'Authorization': f'Basic {base64_auth}',
             'RqUID': str(uuid.uuid4()),
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        
         response = requests.post(
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
             data='scope=GIGACHAT_API_PERS',
-            timeout=20,
+            timeout=15,
             verify=False
         )
         
-        logger.info(f"✅ Статус токена: {response.status_code}")
-        
         if response.status_code != 200:
-            logger.error(f"❌ Ошибка: {response.text[:200]}")
+            logger.error(f"Ошибка токена: {response.status_code}")
             return None
             
-        token = response.json().get('access_token')
-        if not token:
-            logger.error("❌ Токен пустой")
-            return None
-            
+        token = response.json()['access_token']
         giga_token_cache["token"] = token
         giga_token_cache["expires"] = time.time() + 3500
-        logger.info("✅ Токен получен")
         return token
         
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error(f"Ошибка токена: {e}")
         return None
 
 def ask_giga(system, user, max_tokens=2500):
     token = get_giga_token()
     if not token:
-        logger.error("❌ Нет токена")
+        logger.error("❌ Токен не получен")
         return None
     
     headers = {
@@ -113,6 +108,7 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
+        logger.info("📤 Отправляю запрос в GigaChat...")
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -124,15 +120,18 @@ def ask_giga(system, user, max_tokens=2500):
         logger.info(f"✅ GigaChat ответил: {response.status_code}")
         
         if response.status_code != 200:
-            logger.error(f"❌ Ошибка: {response.text[:500]}")
+            logger.error(f"❌ Текст ошибки: {response.text[:500]}")
             return None
         
-        content = response.json()['choices'][0]['message']['content']
-        logger.info(f"✅ Ответ получен, длина: {len(content)}")
+        result = response.json()
+        content = result['choices'][0]['message']['content']
         return content
         
+    except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут GigaChat (60 секунд)")
+        return None
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error(f"❌ Ошибка GigaChat: {e}")
         return None
 
 def ask_giga_with_wait(system, user, max_tokens=2500):
@@ -142,6 +141,7 @@ def ask_giga_with_wait(system, user, max_tokens=2500):
     
     if elapsed < 40:
         wait_time = 40 - elapsed
+        logger.info(f"⏳ Ожидание {wait_time:.1f} секунд")
         time.sleep(wait_time)
     
     return result
@@ -287,27 +287,23 @@ def generate_post():
     return response
 
 # ============================================
-# FLASK ПРИЛОЖЕНИЕ
+# ВЕБ-СЕРВЕР
 # ============================================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Бот Жизнь+ работает!"
+    return "OK"
 
 @app.route('/health')
 def health():
     return {"status": "ok"}
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    else:
-        return '', 403
+def run_flask():
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+
+threading.Thread(target=run_flask, daemon=True).start()
 
 # ============================================
 # МЕНЮ
@@ -755,19 +751,6 @@ scheduler.start()
 # ЗАПУСК
 # ============================================
 if __name__ == '__main__':
-    # Удаляем старый вебхук
-    try:
-        bot.delete_webhook()
-        logger.info("✅ Старый вебхук удалён")
-    except:
-        pass
-    
-    # Устанавливаем новый
-    try:
-        bot.set_webhook(url=WEBHOOK_URL)
-        logger.info(f"✅ Вебхук установлен: {WEBHOOK_URL}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка установки вебхука: {e}")
-    
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    logger.info("🚀 БОТ ЗАПУЩЕН")
+    logger.info("✅ Готов к работе!")
+    bot.polling(none_stop=True)
