@@ -11,8 +11,10 @@ import base64
 import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from flask import Flask, request
 import urllib3
+import pytz
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -304,6 +306,7 @@ def generate_analysis(topic, answers, score, total, is_paid):
         return generate_analysis_free(topic, answers, score, total)
 
 def generate_post():
+    logger.info("🔄 Генерирую пост...")
     themes = [
         "утренняя энергия", "внутренняя сила", "радость в простых вещах",
         "преодоление страхов", "любовь к себе", "благодарность",
@@ -311,16 +314,25 @@ def generate_post():
     ]
     theme = random.choice(themes)
     
-    system = """Ты — психолог, который пишет посты, от которых хочется действовать.
-    Используй НЛП-язык. Без слащавости. Каждый пост уникальный."""
+    system = """Ты пишешь посты в стиле: без пафоса, без воды, как живой разговор.
+    Не используй штампы: «ты уникален», «поверь в себя», «твой путь».
+    Пиши как человек, который просто делится мыслями."""
     
-    user = f"""Напиши пост на тему "{theme}" для Telegram.
-    Длина: 800–1000 знаков. Заголовок с эмодзи. Практический совет.
-    Мотивирующая фраза. Хештеги."""
+    user = f"""Напиши пост на тему "{theme}" для Telegram-канала.
+    Длина: 800–1000 знаков.
+    Заголовок с эмодзи.
+    Практический совет или вопрос для размышления.
+    Без хештегов в тексте.
+    Текст должен быть лёгким, без назидательности."""
     
     response = ask_giga(system, user, max_tokens=2000)
-    if not response or len(response) < 700:
+    if not response:
+        logger.error("❌ GigaChat не ответил")
         return None
+    if len(response) < 700:
+        logger.warning(f"⚠️ Пост короткий: {len(response)} символов")
+        return None
+    logger.info(f"✅ Пост сгенерирован: {len(response)} символов")
     return response
 
 # ============================================
@@ -1002,37 +1014,48 @@ def cmd_post(message):
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
-# ПЛАНИРОВЩИК (12:20, 14:20, 18:20 по Юрге)
+# ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА, UTC+7)
 # ============================================
-scheduler = BackgroundScheduler()
+# ЯВНО УКАЗЫВАЕМ ЧАСОВОЙ ПОЯС ЮРГИ
+scheduler = BackgroundScheduler(timezone='Asia/Novokuznetsk')
 
-def schedule_morning():
-    logger.info("⏳ Запуск утреннего поста...")
+def schedule_first_post():
+    logger.info("⏳ Запуск первого поста (10:00)...")
     text = generate_post()
     if text:
         bot.send_message(CHANNEL_ID, text)
-        logger.info("✅ Утренний пост отправлен")
+        logger.info("✅ Первый пост отправлен")
     else:
-        logger.error("❌ Не удалось сгенерировать утренний пост")
+        logger.error("❌ Не удалось сгенерировать первый пост")
 
-def schedule_daily():
+def schedule_second_post():
+    logger.info("⏳ Запуск второго поста (13:00)...")
+    text = generate_post()
+    if text:
+        bot.send_message(CHANNEL_ID, text)
+        logger.info("✅ Второй пост отправлен")
+    else:
+        logger.error("❌ Не удалось сгенерировать второй пост")
+
+def schedule_third_post():
+    logger.info("⏳ Запуск третьего поста (17:00)...")
+    text = generate_post()
+    if text:
+        bot.send_message(CHANNEL_ID, text)
+        logger.info("✅ Третий пост отправлен")
+    else:
+        logger.error("❌ Не удалось сгенерировать третий пост")
+
+def schedule_daily_test():
     post_daily_test()
 
-def schedule_evening():
-    logger.info("⏳ Запуск вечернего поста...")
-    text = generate_post()
-    if text:
-        bot.send_message(CHANNEL_ID, text)
-        logger.info("✅ Вечерний пост отправлен")
-    else:
-        logger.error("❌ Не удалось сгенерировать вечерний пост")
-
-# ТВОЁ РАСПИСАНИЕ: 12:20, 14:20, 18:20 ПО ЮРГЕ
-scheduler.add_job(schedule_morning, 'cron', hour=12, minute=20)
-scheduler.add_job(schedule_daily, 'cron', hour=14, minute=20)
-scheduler.add_job(schedule_evening, 'cron', hour=18, minute=20)
+# РАСПИСАНИЕ ПО ЮРГЕ (UTC+7)
+scheduler.add_job(schedule_first_post, 'cron', hour=10, minute=0)
+scheduler.add_job(schedule_second_post, 'cron', hour=13, minute=0)
+scheduler.add_job(schedule_daily_test, 'cron', hour=17, minute=0)
+scheduler.add_job(schedule_third_post, 'cron', hour=17, minute=0)
 scheduler.start()
-logger.info("✅ Планировщик запущен")
+logger.info("✅ Планировщик запущен (Юрга, UTC+7)")
 
 # ============================================
 # ЗАПУСК
