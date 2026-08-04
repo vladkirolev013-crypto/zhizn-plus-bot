@@ -844,4 +844,46 @@ def cmd_daily(message):
 
 @bot.message_handler(commands=['post'])
 def cmd_post(message):
-    if
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
+    text = generate_post()
+    
+    if not text:
+        bot.send_message(message.chat.id, "❌ Не удалось сгенерировать пост.")
+        return
+    
+    bot.send_message(CHANNEL_ID, text)
+    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
+
+# ============================================
+# ПЛАНИРОВЩИК
+# ============================================
+scheduler = BackgroundScheduler()
+
+def schedule_morning():
+    text = generate_post()
+    if text:
+        bot.send_message(CHANNEL_ID, text)
+
+def schedule_daily():
+    post_daily_test()
+
+def schedule_evening():
+    text = generate_post()
+    if text:
+        bot.send_message(CHANNEL_ID, text)
+
+scheduler.add_job(schedule_morning, 'cron', hour=8, minute=0)
+scheduler.add_job(schedule_daily, 'cron', hour=10, minute=0)
+scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
+scheduler.start()
+
+# ============================================
+# ЗАПУСК
+# ============================================
+if __name__ == '__main__':
+    logger.info("🚀 БОТ ЗАПУЩЕН")
+    logger.info("✅ Готов к работе!")
+    bot.polling(none_stop=True)
