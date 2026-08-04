@@ -17,12 +17,12 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================
-# НАСТРОЙКИ (КЛЮЧИ ЖЁСТКО ЗАШИТЫ)
+# НАСТРОЙКИ
 # ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 
-# ТВОИ КЛЮЧИ (ЗАШИТЫ В КОД)
+# ТВОИ КЛЮЧИ
 GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
 GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjY1ZmQ5MTY5LTU5YzItNDVlMi1hNGU5LTkzMzE3NTczZTJiNw=="
 
@@ -35,7 +35,33 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# GIGACHAT (ПРАВИЛЬНЫЙ ЗАПРОС)
+# ЖЁСТКОЕ УДАЛЕНИЕ ВЕБХУКА И СТАРЫХ ПРОЦЕССОВ
+# ============================================
+def kill_everything():
+    """Полная очистка перед запуском"""
+    try:
+        # 1. Удаляем вебхук через API
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        response = requests.post(url, json={"drop_pending_updates": True})
+        logger.info(f"🧹 Удаление вебхука: {response.text}")
+        
+        # 2. Проверяем, что вебхук действительно удалён
+        time.sleep(2)
+        check_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+        check = requests.get(check_url)
+        logger.info(f"🔍 Статус вебхука: {check.text}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка очистки: {e}")
+        return False
+
+# ВЫЗЫВАЕМ ОЧИСТКУ ПРИ СТАРТЕ
+kill_everything()
+time.sleep(3)
+
+# ============================================
+# GIGACHAT
 # ============================================
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -54,11 +80,10 @@ def get_giga_token():
             'Content-Type': 'application/x-www-form-urlencoded'
         }
         
-        # ОТПРАВЛЯЕМ ДАННЫЕ КАК СТРОКУ (НЕ JSON!)
         response = requests.post(
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
-            data='scope=GIGACHAT_API_PERS',  # <--- ВАЖНО: data, а не json
+            data='scope=GIGACHAT_API_PERS',
             timeout=20,
             verify=False
         )
