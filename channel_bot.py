@@ -11,7 +11,7 @@ import base64
 import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask
+from flask import Flask, request
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -21,8 +21,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
+WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL', 'https://zhizn-plus-bot.onrender.com') + '/webhook'
 
-# ТВОИ КЛЮЧИ
 GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
 GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjY1ZmQ5MTY5LTU5YzItNDVlMi1hNGU5LTkzMzE3NTczZTJiNw=="
 
@@ -33,32 +33,6 @@ if not BOT_TOKEN:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# ============================================
-# ЖЁСТКОЕ УДАЛЕНИЕ ВЕБХУКА И СТАРЫХ ПРОЦЕССОВ
-# ============================================
-def kill_everything():
-    """Полная очистка перед запуском"""
-    try:
-        # 1. Удаляем вебхук через API
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        response = requests.post(url, json={"drop_pending_updates": True})
-        logger.info(f"🧹 Удаление вебхука: {response.text}")
-        
-        # 2. Проверяем, что вебхук действительно удалён
-        time.sleep(2)
-        check_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
-        check = requests.get(check_url)
-        logger.info(f"🔍 Статус вебхука: {check.text}")
-        
-        return True
-    except Exception as e:
-        logger.error(f"❌ Ошибка очистки: {e}")
-        return False
-
-# ВЫЗЫВАЕМ ОЧИСТКУ ПРИ СТАРТЕ
-kill_everything()
-time.sleep(3)
 
 # ============================================
 # GIGACHAT
@@ -169,6 +143,13 @@ def ask_giga_with_wait(system, user, max_tokens=2500):
 # TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# Удаляем старый вебхук
+try:
+    bot.delete_webhook()
+    logger.info("✅ Вебхук удалён")
+except:
+    pass
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -306,23 +287,36 @@ def generate_post():
     return response
 
 # ============================================
-# ВЕБ-СЕРВЕР
+# FLASK ПРИЛОЖЕНИЕ (ВЕБХУК)
 # ============================================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "OK"
+    return "Бот Жизнь+ работает!"
 
 @app.route('/health')
 def health():
     return {"status": "ok"}
 
-def run_flask():
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    else:
+        return '', 403
 
-threading.Thread(target=run_flask, daemon=True).start()
+@app.route('/set_webhook', methods=['GET'])
+def set_webhook():
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
+        response = requests.get(url)
+        return response.text
+    except Exception as e:
+        return str(e)
 
 # ============================================
 # МЕНЮ
@@ -348,11 +342,6 @@ def test_type_menu():
     mk.add('💎 Платный (20 вопросов)')
     mk.add('🔙 Назад')
     return mk
-
-# ============================================
-# СОСТОЯНИЯ
-# ============================================
-sessions = {}
 
 # ============================================
 # ОБРАБОТЧИКИ
@@ -493,6 +482,11 @@ def topic_callback(c):
 def cancel_callback(c):
     bot.delete_message(c.message.chat.id, c.message.message_id)
     bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
+
+# ============================================
+# СОСТОЯНИЯ
+# ============================================
+sessions = {}
 
 # ============================================
 # ПРОХОЖДЕНИЕ ТЕСТА
@@ -767,9 +761,16 @@ scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
 scheduler.start()
 
 # ============================================
-# ЗАПУСК
+# ЗАПУСК (ВЕБХУК)
 # ============================================
 if __name__ == '__main__':
-    logger.info("🚀 БОТ ЗАПУЩЕН")
-    logger.info("✅ Готов к работе!")
-    bot.polling(none_stop=True)
+    # Устанавливаем вебхук
+    try:
+        bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"✅ Вебхук установлен: {WEBHOOK_URL}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка установки вебхука: {e}")
+    
+    # Запускаем Flask
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
