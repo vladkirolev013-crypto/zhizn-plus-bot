@@ -346,10 +346,12 @@ threading.Thread(target=run_flask, daemon=True).start()
 # ============================================
 # МЕНЮ
 # ============================================
-def main_menu():
+def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🚀 Старт', '🎯 Пройти тест')
     mk.add('❤️ О канале')
+    if chat_id in ADMIN_IDS:
+        mk.add('👑 Админ-панель')
     return mk
 
 def admin_menu():
@@ -401,8 +403,7 @@ def start(message):
     
     welcome = "🌟 Добро пожаловать в бота Жизнь+!\n\nНажми «🎯 Пройти тест» или «❤️ О канале»."
     
-    # Всегда показываем главное меню
-    bot.send_message(message.chat.id, welcome, reply_markup=main_menu())
+    bot.send_message(message.chat.id, welcome, reply_markup=get_main_menu(message.chat.id))
 
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
 def start_button(message):
@@ -411,6 +412,12 @@ def start_button(message):
 @bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
 def back_to_main_from_admin(message):
     start(message)
+
+@bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
+def admin_panel_button(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
@@ -514,7 +521,7 @@ def topic_callback(c):
 @bot.callback_query_handler(func=lambda c: c.data == 'cancel')
 def cancel_callback(c):
     bot.delete_message(c.message.chat.id, c.message.message_id)
-    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=main_menu())
+    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
 
 # ============================================
 # ПРОХОЖДЕНИЕ ТЕСТА
@@ -547,7 +554,7 @@ def send_question(chat_id):
 def stop_test(message):
     if message.chat.id in sessions:
         del sessions[message.chat.id]
-    bot.send_message(message.chat.id, "⏹ Тест прерван", reply_markup=main_menu())
+    bot.send_message(message.chat.id, "⏹ Тест прерван", reply_markup=get_main_menu(message.chat.id))
 
 @bot.message_handler(func=lambda m: m.text and m.text[0] in 'ABCD')
 def handle_answer(message):
@@ -606,21 +613,15 @@ def finish_test(chat_id):
     bot.send_message(
         chat_id,
         f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}",
-        reply_markup=main_menu()
+        reply_markup=get_main_menu(chat_id)
     )
     
     del sessions[chat_id]
-    bot.send_message(chat_id, "✨ Готово!", reply_markup=main_menu())
+    bot.send_message(chat_id, "✨ Готово!", reply_markup=get_main_menu(chat_id))
 
 # ============================================
-# АДМИН-КНОПКИ (ВИДНЫ ТОЛЬКО АДМИНУ)
+# АДМИН-КНОПКИ
 # ============================================
-@bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
-def admin_panel(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
-
 @bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
 def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
