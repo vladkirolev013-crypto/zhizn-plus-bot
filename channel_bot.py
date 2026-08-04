@@ -823,7 +823,7 @@ def retry_analysis(message):
         )
 
 # ============================================
-# АДМИН-КНОПКИ
+# АДМИН-КНОПКИ (ИСПРАВЛЕНА ОШИБКА)
 # ============================================
 @bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
 def admin_post(message):
@@ -864,25 +864,7 @@ def admin_image(message):
     else:
         bot.send_message(message.chat.id, "❌ Не удалось сгенерировать картинку. Попробуйте позже.")
 
-@bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
-def admin_test_to_channel(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    
-    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
-    for topic, emoji in TEST_TOPICS.items():
-        mk.add(telebot.types.InlineKeyboardButton(
-            emoji,
-            callback_data=f"admin_test_{topic}"
-        ))
-    mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="admin_cancel"))
-    
-    bot.send_message(
-        message.chat.id,
-        "🎯 Выберите тему для теста в канал:",
-        reply_markup=mk
-    )
-
+# ИСПРАВЛЕНА ФУНКЦИЯ (c.execute вместо conn.execute)
 @bot.callback_query_handler(func=lambda c: c.data.startswith('admin_test_'))
 def admin_test_topic_callback(c):
     try:
@@ -1016,7 +998,6 @@ def cmd_post(message):
 # ============================================
 # ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА, UTC+7)
 # ============================================
-# ЯВНО УКАЗЫВАЕМ ЧАСОВОЙ ПОЯС ЮРГИ
 scheduler = BackgroundScheduler(timezone='Asia/Novokuznetsk')
 
 def schedule_first_post():
@@ -1049,7 +1030,6 @@ def schedule_third_post():
 def schedule_daily_test():
     post_daily_test()
 
-# РАСПИСАНИЕ ПО ЮРГЕ (UTC+7)
 scheduler.add_job(schedule_first_post, 'cron', hour=10, minute=0)
 scheduler.add_job(schedule_second_post, 'cron', hour=13, minute=0)
 scheduler.add_job(schedule_daily_test, 'cron', hour=17, minute=0)
