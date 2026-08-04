@@ -21,8 +21,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
-GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
-GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
+
+# НОВЫЕ ДАННЫЕ ДЛЯ САЛЮТА
+SALUTE_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
+SALUTE_CLIENT_SECRET = "b655133f-f4fb-47fe-9cb7-23e4088f81d1"
 
 ADMIN_IDS = [8746212340]
 
@@ -49,16 +51,16 @@ kill_webhook()
 time.sleep(2)
 
 # ============================================
-# GIGACHAT
+# НОВЫЙ GIGACHAT (САЛЮТ)
 # ============================================
-giga_token_cache = {"token": None, "expires": 0}
+token_cache = {"token": None, "expires": 0}
 
-def get_giga_token():
-    if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
-        return giga_token_cache["token"]
+def get_salute_token():
+    if token_cache["token"] and time.time() < token_cache["expires"]:
+        return token_cache["token"]
     
     try:
-        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
+        auth_string = f"{SALUTE_CLIENT_ID}:{SALUTE_CLIENT_SECRET}"
         base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
         headers = {
             'Authorization': f'Basic {base64_auth}',
@@ -74,22 +76,21 @@ def get_giga_token():
         )
         
         if response.status_code != 200:
-            logger.error(f"Ошибка токена: {response.status_code}")
+            logger.error(f"❌ Ошибка токена: {response.status_code}")
             return None
             
         token = response.json()['access_token']
-        giga_token_cache["token"] = token
-        giga_token_cache["expires"] = time.time() + 3500
+        token_cache["token"] = token
+        token_cache["expires"] = time.time() + 3500
         return token
         
     except Exception as e:
-        logger.error(f"Ошибка токена: {e}")
+        logger.error(f"❌ Ошибка токена: {e}")
         return None
 
 def ask_giga(system, user, max_tokens=2500):
-    token = get_giga_token()
+    token = get_salute_token()
     if not token:
-        logger.error("❌ Токен не получен")
         return None
     
     headers = {
@@ -103,12 +104,11 @@ def ask_giga(system, user, max_tokens=2500):
             {"role": "system", "content": system},
             {"role": "user", "content": user}
         ],
-        "temperature": 0.95,
+        "temperature": 0.9,
         "max_tokens": max_tokens
     }
     
     try:
-        logger.info("📤 Отправляю запрос в GigaChat...")
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -117,21 +117,14 @@ def ask_giga(system, user, max_tokens=2500):
             verify=False
         )
         
-        logger.info(f"✅ GigaChat ответил: {response.status_code}")
-        
         if response.status_code != 200:
-            logger.error(f"❌ Текст ошибки: {response.text[:500]}")
+            logger.error(f"❌ GigaChat ошибка: {response.status_code}")
             return None
         
-        result = response.json()
-        content = result['choices'][0]['message']['content']
-        return content
+        return response.json()['choices'][0]['message']['content']
         
-    except requests.exceptions.Timeout:
-        logger.error("❌ Таймаут GigaChat (60 секунд)")
-        return None
     except Exception as e:
-        logger.error(f"❌ Ошибка GigaChat: {e}")
+        logger.error(f"❌ GigaChat ошибка: {e}")
         return None
 
 def ask_giga_with_wait(system, user, max_tokens=2500):
@@ -141,10 +134,58 @@ def ask_giga_with_wait(system, user, max_tokens=2500):
     
     if elapsed < 40:
         wait_time = 40 - elapsed
-        logger.info(f"⏳ Ожидание {wait_time:.1f} секунд")
         time.sleep(wait_time)
     
     return result
+
+# ============================================
+# ГЕНЕРАЦИЯ КАРТИНКИ ЧЕРЕЗ КАНДИНСКИЙ (ЧЕРЕЗ GIGACHAT)
+# ============================================
+def generate_kandinsky_image(prompt):
+    try:
+        token = get_salute_token()
+        if not token:
+            return None
+        
+        # Кандинский теперь встроен в GigaChat API
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'RqUID': str(uuid.uuid4()),
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            "model": "Kandinsky",
+            "prompt": prompt,
+            "num_images": 1,
+            "width": 1024,
+            "height": 1024,
+            "style": "photo-realistic"
+        }
+        
+        response = requests.post(
+            'https://gigachat.devices.sberbank.ru/api/v1/images/generations',
+            headers=headers,
+            json=payload,
+            timeout=60,
+            verify=False
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"❌ Кандинский ошибка: {response.status_code}")
+            return None
+        
+        # Парсим ответ
+        image_url = response.json()['data'][0]['url']
+        img = requests.get(image_url, timeout=30).content
+        filename = f'/tmp/kandinsky_{int(time.time())}.jpg'
+        with open(filename, 'wb') as f:
+            f.write(img)
+        
+        return filename
+        
+    except Exception as e:
+        logger.error(f"❌ Кандинский ошибка: {e}")
+        return None
 
 # ============================================
 # TELEGRAM БОТ
@@ -184,7 +225,7 @@ TEST_TOPICS = {
 }
 
 # ============================================
-# ГЕНЕРАТОР ТЕСТОВ
+# ГЕНЕРАТОРЫ
 # ============================================
 def generate_test_questions(topic, count=10):
     system = "Ты — психолог. Составь вопросы для теста в формате JSON."
@@ -225,7 +266,6 @@ def generate_test_questions(topic, count=10):
             end = response.rfind('}') + 1
         
         if start == -1 or end == 0:
-            logger.error("❌ JSON не найден")
             return None
         
         json_str = response[start:end]
@@ -236,11 +276,9 @@ def generate_test_questions(topic, count=10):
         elif isinstance(data, list):
             questions = data
         else:
-            logger.error(f"❌ Неизвестный формат: {type(data)}")
             return None
         
         if not questions:
-            logger.error("❌ Пустой список")
             return None
         
         parsed = []
@@ -257,12 +295,8 @@ def generate_test_questions(topic, count=10):
         return parsed[:count]
         
     except Exception as e:
-        logger.error(f"❌ Ошибка парсинга: {e}")
         return None
 
-# ============================================
-# ГЕНЕРАТОР АНАЛИЗА
-# ============================================
 def generate_analysis(topic, answers, score, total, is_paid):
     min_len = 1400 if is_paid else 700
 
@@ -283,25 +317,16 @@ def generate_analysis(topic, answers, score, total, is_paid):
 
     user = f"Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}. Напиши анализ (минимум {min_len} знаков)."
     
-    logger.info("📤 Генерирую анализ...")
     response = ask_giga_with_wait(system, user, max_tokens=3000 if is_paid else 2000)
 
     if not response:
-        logger.error("❌ GigaChat не ответил на запрос анализа")
         return None
 
-    logger.info(f"📥 Получен анализ. Длина: {len(response)} символов")
-    logger.info(f"📥 Текст анализа: {response[:300]}...")
-
     if len(response) < min_len * 0.7:
-        logger.warning(f"⚠️ Анализ слишком короткий ({len(response)} символов, нужно > {min_len})")
         return None
 
     return response
 
-# ============================================
-# ГЕНЕРАТОР ПОСТА (УНИКАЛЬНЫЙ КАЖДЫЙ РАЗ)
-# ============================================
 def generate_post():
     themes = [
         "утренняя энергия и настрой на день",
@@ -346,33 +371,6 @@ def generate_post():
     if len(response) < 700:
         return None
     return response
-
-# ============================================
-# ГЕНЕРАТОР КАРТИНКИ (УНИКАЛЬНАЯ КАЖДЫЙ РАЗ)
-# ============================================
-def generate_image():
-    try:
-        prompts = [
-            "beautiful sunrise over mountains motivational",
-            "happy person in nature positive energy",
-            "sunset beach calm peaceful happiness",
-            "city sunrise optimism new day",
-            "forest path sunlight inspiration",
-            "ocean waves positive energy happiness",
-            "mountain peak success motivation",
-            "butterfly on flower transformation beauty",
-            "rainbow after storm hope positivity",
-            "love heart nature warmth"
-        ]
-        prompt = random.choice(prompts)
-        url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?width=1080&height=720&nologo=true"
-        img = requests.get(url, timeout=30).content
-        filename = f'/tmp/image_{int(time.time())}.jpg'
-        with open(filename, 'wb') as f:
-            f.write(img)
-        return filename
-    except:
-        return None
 
 # ============================================
 # ВЕБ-СЕРВЕР
@@ -670,14 +668,14 @@ def finish_test(chat_id):
     bot.send_message(chat_id, "✨ Готово!", reply_markup=get_main_menu(chat_id))
 
 # ============================================
-# АДМИН-КНОПКИ (УНИКАЛЬНЫЙ ПОСТ И КАРТИНКА)
+# АДМИН-КНОПКИ
 # ============================================
 @bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
 def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "📤 Генерация уникального поста...\n⏳ До 40 секунд.")
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
     text = generate_post()
     
     if not text:
@@ -685,21 +683,23 @@ def admin_post(message):
         return
     
     bot.send_message(CHANNEL_ID, text)
-    bot.send_message(message.chat.id, "✅ Уникальный пост отправлен в канал!")
+    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 @bot.message_handler(func=lambda m: m.text == '🖼 Картинка в канал')
 def admin_image(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "🖼 Генерация уникальной картинки...")
+    bot.send_message(message.chat.id, "🖼 Генерация картинки через Кандинский...\n⏳ До 30 секунд.")
     
-    img_path = generate_image()
+    prompt = "красивый пейзаж, вдохновение, счастье, позитив, энергия"
+    img_path = generate_kandinsky_image(prompt)
+    
     if img_path:
         with open(img_path, 'rb') as photo:
             bot.send_photo(CHANNEL_ID, photo)
         os.remove(img_path)
-        bot.send_message(message.chat.id, "✅ Уникальная картинка отправлена в канал!")
+        bot.send_message(message.chat.id, "✅ Картинка отправлена в канал!")
     else:
         bot.send_message(message.chat.id, "❌ Не удалось сгенерировать картинку.")
 
@@ -845,7 +845,7 @@ def cmd_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "📤 Генерация уникального поста...\n⏳ До 40 секунд.")
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
     text = generate_post()
     
     if not text:
@@ -853,7 +853,7 @@ def cmd_post(message):
         return
     
     bot.send_message(CHANNEL_ID, text)
-    bot.send_message(message.chat.id, "✅ Уникальный пост отправлен в канал!")
+    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
 # ПЛАНИРОВЩИК
