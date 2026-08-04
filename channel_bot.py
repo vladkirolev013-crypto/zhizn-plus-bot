@@ -494,7 +494,6 @@ def free_test(message):
 def paid_test(message):
     chat_id = message.chat.id
     
-    # Проверяем, есть ли у пользователя активный промокод
     session = load_session(chat_id)
     if session and session.get('is_paid'):
         show_topics(message, 'paid', 20)
@@ -540,16 +539,13 @@ def process_promo(message):
         bot.send_message(chat_id, "❌ Этот промокод уже был использован.")
         return
     
-    # Активируем промокод для пользователя
     c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", 
               (chat_id, datetime.now().isoformat(), promo_id))
     conn.commit()
     
-    # Обновляем статистику
     c.execute("UPDATE stats SET promo_used = promo_used + 1")
     conn.commit()
     
-    # Сохраняем в сессию, что пользователь может пройти платный тест
     session = load_session(chat_id) or {}
     session['is_paid'] = True
     session['promo_used'] = True
@@ -731,7 +727,6 @@ def finish_test(chat_id):
     session['result'] = basic_result
     save_session(chat_id, session)
     
-    # Обновляем статистику
     if is_paid:
         c.execute("UPDATE stats SET paid_count = paid_count + 1")
     else:
@@ -1003,7 +998,7 @@ def cmd_post(message):
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
-# ПЛАНИРОВЩИК
+# ПЛАНИРОВЩИК (ТВОЁ ВРЕМЯ — ЮРГА, UTC+7)
 # ============================================
 scheduler = BackgroundScheduler()
 
@@ -1020,9 +1015,10 @@ def schedule_evening():
     if text:
         bot.send_message(CHANNEL_ID, text)
 
-scheduler.add_job(schedule_morning, 'cron', hour=8, minute=0)
-scheduler.add_job(schedule_daily, 'cron', hour=10, minute=0)
-scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
+# ТВОЁ РАСПИСАНИЕ: 10:00, 12:00, 16:00 ПО ЮРГЕ
+scheduler.add_job(schedule_morning, 'cron', hour=10, minute=0)
+scheduler.add_job(schedule_daily, 'cron', hour=12, minute=0)
+scheduler.add_job(schedule_evening, 'cron', hour=16, minute=0)
 scheduler.start()
 
 # ============================================
