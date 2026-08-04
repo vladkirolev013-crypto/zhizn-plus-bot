@@ -29,6 +29,7 @@ GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
 GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOmY3NjZhOGZjLWUwNTItNGYwZC05NDQwLTUxNzJjNGYyOWE4NQ=="
 
 ADMIN_IDS = [8746212340]
+BOT_USERNAME = None  # Кэшируем имя бота
 
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не установлен!")
@@ -41,41 +42,44 @@ logger = logging.getLogger(__name__)
 # ============================================
 DB_PATH = 'channel.db'
 conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
-c = conn.cursor()
 
-c.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              topic TEXT, 
-              questions TEXT, 
-              created_at TEXT)''')
+def init_db():
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                  topic TEXT, 
+                  questions TEXT, 
+                  created_at TEXT)''')
 
-c.execute('''CREATE TABLE IF NOT EXISTS stats 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              free_count INTEGER DEFAULT 0, 
-              paid_count INTEGER DEFAULT 0,
-              promo_used INTEGER DEFAULT 0)''')
-c.execute("SELECT COUNT(*) FROM stats")
-if c.fetchone()[0] == 0:
-    c.execute("INSERT INTO stats (free_count, paid_count, promo_used) VALUES (0, 0, 0)")
+    cursor.execute('''CREATE TABLE IF NOT EXISTS stats 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                  free_count INTEGER DEFAULT 0, 
+                  paid_count INTEGER DEFAULT 0,
+                  promo_used INTEGER DEFAULT 0)''')
+    cursor.execute("SELECT COUNT(*) FROM stats")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO stats (free_count, paid_count, promo_used) VALUES (0, 0, 0)")
 
-c.execute('''CREATE TABLE IF NOT EXISTS user_sessions 
-             (chat_id INTEGER PRIMARY KEY, 
-              topic TEXT, 
-              questions TEXT, 
-              current_q INTEGER, 
-              answers TEXT, 
-              scores TEXT, 
-              is_paid INTEGER, 
-              result TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS user_sessions 
+                 (chat_id INTEGER PRIMARY KEY, 
+                  topic TEXT, 
+                  questions TEXT, 
+                  current_q INTEGER, 
+                  answers TEXT, 
+                  scores TEXT, 
+                  is_paid INTEGER, 
+                  result TEXT)''')
 
-c.execute('''CREATE TABLE IF NOT EXISTS promocodes 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-              code TEXT UNIQUE,
-              created_by INTEGER,
-              created_at TEXT,
-              used_by INTEGER DEFAULT 0,
-              used_at TEXT)''')
-conn.commit()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS promocodes 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  code TEXT UNIQUE,
+                  created_by INTEGER,
+                  created_at TEXT,
+                  used_by INTEGER DEFAULT 0,
+                  used_at TEXT)''')
+    conn.commit()
+
+init_db()
 
 # ============================================
 # GIGACHAT
@@ -336,11 +340,12 @@ def generate_post():
     return response
 
 # ============================================
-# СЕССИИ
+# СЕССИИ (ИСПРАВЛЕНО: локальные курсоры)
 # ============================================
 def load_session(chat_id):
-    c.execute("SELECT topic, questions, current_q, answers, scores, is_paid, result FROM user_sessions WHERE chat_id=?", (chat_id,))
-    row = c.fetchone()
+    cursor = conn.cursor()
+    cursor.execute("SELECT topic, questions, current_q, answers, scores, is_paid, result FROM user_sessions WHERE chat_id=?", (chat_id,))
+    row = cursor.fetchone()
     if row:
         return {
             'topic': row[0],
@@ -354,7 +359,8 @@ def load_session(chat_id):
     return None
 
 def save_session(chat_id, session):
-    c.execute("""INSERT OR REPLACE INTO user_sessions 
+    cursor = conn.cursor()
+    cursor.execute("""INSERT OR REPLACE INTO user_sessions 
                  (chat_id, topic, questions, current_q, answers, scores, is_paid, result) 
                  VALUES (?,?,?,?,?,?,?,?)""",
               (chat_id, session['topic'], json.dumps(session['questions']), 
@@ -364,7 +370,8 @@ def save_session(chat_id, session):
     conn.commit()
 
 def delete_session(chat_id):
-    c.execute("DELETE FROM user_sessions WHERE chat_id=?", (chat_id,))
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM user_sessions WHERE chat_id=?", (chat_id,))
     conn.commit()
 
 # ============================================
@@ -427,6 +434,10 @@ def get_result_menu(chat_id):
 # ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
+    global BOT_USERNAME
+    if not BOT_USERNAME:
+        BOT_USERNAME = bot.get_me().username
+        
     chat_id = message.chat.id
     
     if ' ' in message.text:
@@ -434,8 +445,9 @@ def start(message):
         if param.startswith('daily_'):
             try:
                 _, topic, tid = param.split('_')
-                c.execute("SELECT questions FROM daily_tests WHERE id=?", (tid,))
-                row = c.fetchone()
+                cursor = conn.cursor()
+                cursor.execute("SELECT questions FROM daily_tests WHERE id=?", (tid,))
+                row = cursor.fetchone()
                 if row:
                     questions = json.loads(row[0])
                     session = {
@@ -523,7 +535,7 @@ def paid_test(message):
         )
 
 # ============================================
-# ПРОМОКОДЫ
+# ПРОМОКОДЫ (ИСПРАВЛЕНО: локальные курсоры)
 # ============================================
 @bot.message_handler(func=lambda m: m.text == '🎫 Активировать промокод')
 def activate_promo(message):
@@ -538,8 +550,9 @@ def process_promo(message):
     chat_id = message.chat.id
     code = message.text.strip().upper()
     
-    c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
-    row = c.fetchone()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
+    row = cursor.fetchone()
     
     if not row:
         bot.send_message(chat_id, "❌ Неверный промокод. Попробуйте ещё раз или проверьте правильность ввода.")
@@ -551,11 +564,11 @@ def process_promo(message):
         bot.send_message(chat_id, "❌ Этот промокод уже был использован.")
         return
     
-    c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", 
+    cursor.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", 
               (chat_id, datetime.now().isoformat(), promo_id))
     conn.commit()
     
-    c.execute("UPDATE stats SET promo_used = promo_used + 1")
+    cursor.execute("UPDATE stats SET promo_used = promo_used + 1")
     conn.commit()
     
     session = load_session(chat_id) or {}
@@ -579,7 +592,7 @@ def create_promo(message):
         message.chat.id,
         "🎫 Введите название промокода (латиницей, без пробелов):\n\n"
         "Например: ZHIZN100\n"
-        "Или нажмите «Отмена», чтобы отменить."
+        "Или напишите «Отмена», чтобы отменить."
     )
     bot.register_next_step_handler(message, process_create_promo)
 
@@ -596,7 +609,8 @@ def process_create_promo(message):
         return
     
     try:
-        c.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
                   (code, chat_id, datetime.now().isoformat()))
         conn.commit()
         
@@ -629,17 +643,17 @@ def show_topics(message, test_type, count):
         reply_markup=mk
     )
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith(('free', 'paid')))
-def topic_callback(c):
+@bot.callback_query_handler(func=lambda call: call.data.startswith(('free', 'paid')))
+def topic_callback(call):
     try:
-        chat_id = c.message.chat.id
-        test_type, topic, count = c.data.split('_')
+        chat_id = call.message.chat.id
+        test_type, topic, count = call.data.split('_')
         is_paid = test_type == 'paid'
         
         bot.edit_message_text(
             "⏳ Генерация теста...\nПодождите до 30 секунд.",
             chat_id,
-            c.message.message_id
+            call.message.message_id
         )
         
         questions = generate_test_questions(topic, int(count))
@@ -657,15 +671,15 @@ def topic_callback(c):
         }
         save_session(chat_id, session)
         
-        bot.delete_message(chat_id, c.message.message_id)
+        bot.delete_message(chat_id, call.message.message_id)
         send_question(chat_id)
     except Exception as e:
-        bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
+        bot.send_message(call.message.chat.id, f"❌ Ошибка: {str(e)}")
 
-@bot.callback_query_handler(func=lambda c: c.data == 'cancel')
-def cancel_callback(c):
-    bot.delete_message(c.message.chat.id, c.message.message_id)
-    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
+@bot.callback_query_handler(func=lambda call: call.data == 'cancel')
+def cancel_callback(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    bot.send_message(call.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(call.message.chat.id))
 
 # ============================================
 # ПРОХОЖДЕНИЕ ТЕСТА
@@ -723,7 +737,7 @@ def handle_answer(message):
     send_question(chat_id)
 
 # ============================================
-# ЗАВЕРШЕНИЕ ТЕСТА
+# ЗАВЕРШЕНИЕ ТЕСТА (ИСПРАВЛЕНО: локальные курсоры)
 # ============================================
 def finish_test(chat_id):
     session = load_session(chat_id)
@@ -739,10 +753,11 @@ def finish_test(chat_id):
     session['result'] = basic_result
     save_session(chat_id, session)
     
+    cursor = conn.cursor()
     if is_paid:
-        c.execute("UPDATE stats SET paid_count = paid_count + 1")
+        cursor.execute("UPDATE stats SET paid_count = paid_count + 1")
     else:
-        c.execute("UPDATE stats SET free_count = free_count + 1")
+        cursor.execute("UPDATE stats SET free_count = free_count + 1")
     conn.commit()
     
     bot.send_message(
@@ -823,7 +838,7 @@ def retry_analysis(message):
         )
 
 # ============================================
-# АДМИН-КНОПКИ (ИСПРАВЛЕНА ОШИБКА)
+# АДМИН-КНОПКИ
 # ============================================
 @bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
 def admin_post(message):
@@ -864,33 +879,38 @@ def admin_image(message):
     else:
         bot.send_message(message.chat.id, "❌ Не удалось сгенерировать картинку. Попробуйте позже.")
 
-# ИСПРАВЛЕНА ФУНКЦИЯ (c.execute вместо conn.execute)
-@bot.callback_query_handler(func=lambda c: c.data.startswith('admin_test_'))
-def admin_test_topic_callback(c):
+# ИСПРАВЛЕНО: переименован параметр 'c' в 'call', локальный курсор
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_test_'))
+def admin_test_topic_callback(call):
     try:
-        topic = c.data.replace('admin_test_', '')
+        topic = call.data.replace('admin_test_', '')
         bot.edit_message_text(
             f"⏳ Генерация теста по теме {topic}...",
-            c.message.chat.id,
-            c.message.message_id
+            call.message.chat.id,
+            call.message.message_id
         )
         
         questions = generate_test_questions(topic, 10)
         if not questions:
-            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест.")
+            bot.send_message(call.message.chat.id, "❌ Не удалось сгенерировать тест.")
             return
         
-        c.execute(
+        cursor = conn.cursor()
+        cursor.execute(
             "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
             (topic, json.dumps(questions), datetime.now().isoformat())
         )
         conn.commit()
-        test_id = c.lastrowid
+        test_id = cursor.lastrowid
         
+        global BOT_USERNAME
+        if not BOT_USERNAME:
+            BOT_USERNAME = bot.get_me().username
+            
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton(
             "🎯 Пройти тест",
-            url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"
+            url=f"https://t.me/{BOT_USERNAME}?start=daily_{topic}_{test_id}"
         ))
         
         bot.send_message(
@@ -900,24 +920,25 @@ def admin_test_topic_callback(c):
         )
         bot.edit_message_text(
             f"✅ Тест по теме {topic} отправлен в канал!",
-            c.message.chat.id,
-            c.message.message_id
+            call.message.chat.id,
+            call.message.message_id
         )
     except Exception as e:
-        bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
+        bot.send_message(call.message.chat.id, f"❌ Ошибка: {str(e)}")
 
-@bot.callback_query_handler(func=lambda c: c.data == 'admin_cancel')
-def admin_cancel(c):
-    bot.delete_message(c.message.chat.id, c.message.message_id)
-    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=admin_menu())
+@bot.callback_query_handler(func=lambda call: call.data == 'admin_cancel')
+def admin_cancel(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    bot.send_message(call.message.chat.id, "❌ Отменено", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: m.text == '📊 Статистика')
 def admin_stats(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    c.execute("SELECT free_count, paid_count, promo_used FROM stats LIMIT 1")
-    row = c.fetchone()
+    cursor = conn.cursor()
+    cursor.execute("SELECT free_count, paid_count, promo_used FROM stats LIMIT 1")
+    row = cursor.fetchone()
     
     if row:
         free_count, paid_count, promo_used = row
@@ -934,7 +955,7 @@ def admin_stats(message):
     bot.send_message(message.chat.id, text)
 
 # ============================================
-# ЕЖЕДНЕВНЫЙ ТЕСТ
+# ЕЖЕДНЕВНЫЙ ТЕСТ (ИСПРАВЛЕНО: локальный курсор)
 # ============================================
 def post_daily_test():
     logger.info("⏳ Запуск ежедневного теста...")
@@ -944,17 +965,22 @@ def post_daily_test():
     
     questions = generate_test_questions(topic, 10)
     if questions:
-        c.execute(
+        cursor = conn.cursor()
+        cursor.execute(
             "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
             (topic, json.dumps(questions), datetime.now().isoformat())
         )
         conn.commit()
-        test_id = c.lastrowid
+        test_id = cursor.lastrowid
         
+        global BOT_USERNAME
+        if not BOT_USERNAME:
+            BOT_USERNAME = bot.get_me().username
+            
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton(
             "🎯 Пройти тест",
-            url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"
+            url=f"https://t.me/{BOT_USERNAME}?start=daily_{topic}_{test_id}"
         ))
         
         bot.send_message(
@@ -996,7 +1022,7 @@ def cmd_post(message):
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
-# ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА, UTC+7)
+# ПЛАНИРОВЩИК (ИСПРАВЛЕНО: явный timezone в каждом задании + разнесение по времени)
 # ============================================
 scheduler = BackgroundScheduler(timezone='Asia/Novokuznetsk')
 
@@ -1019,7 +1045,7 @@ def schedule_second_post():
         logger.error("❌ Не удалось сгенерировать второй пост")
 
 def schedule_third_post():
-    logger.info("⏳ Запуск третьего поста (17:00)...")
+    logger.info("⏳ Запуск третьего поста (17:05)...")
     text = generate_post()
     if text:
         bot.send_message(CHANNEL_ID, text)
@@ -1030,10 +1056,12 @@ def schedule_third_post():
 def schedule_daily_test():
     post_daily_test()
 
-scheduler.add_job(schedule_first_post, 'cron', hour=10, minute=0)
-scheduler.add_job(schedule_second_post, 'cron', hour=13, minute=0)
-scheduler.add_job(schedule_daily_test, 'cron', hour=17, minute=0)
-scheduler.add_job(schedule_third_post, 'cron', hour=17, minute=0)
+# ИСПРАВЛЕНО: явное указание timezone и разнесение задач (17:00 и 17:05)
+scheduler.add_job(schedule_first_post, CronTrigger(hour=10, minute=0, timezone='Asia/Novokuznetsk'))
+scheduler.add_job(schedule_second_post, CronTrigger(hour=13, minute=0, timezone='Asia/Novokuznetsk'))
+scheduler.add_job(schedule_daily_test, CronTrigger(hour=17, minute=0, timezone='Asia/Novokuznetsk'))
+scheduler.add_job(schedule_third_post, CronTrigger(hour=17, minute=5, timezone='Asia/Novokuznetsk'))
+
 scheduler.start()
 logger.info("✅ Планировщик запущен (Юрга, UTC+7)")
 
