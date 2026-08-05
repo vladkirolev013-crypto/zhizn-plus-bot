@@ -25,14 +25,14 @@ BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
-# Agnes AI (БЕСПЛАТНО)
+# Agnes AI
 AGNES_API_KEY = "sk-8nqC897jST7vx1brGMUTNLRsVGPXgP7Bcpuwmbl5quaCLN5c"
 AGNES_API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
 
 TIMEZONE = ZoneInfo("Asia/Novokuznetsk")
 
-BOT_VERSION = "10.0.0"
-BOT_NAME = "Жизнь+ Супер-картинки (Европа)"
+BOT_VERSION = "11.0.0"
+BOT_NAME = "Жизнь+ Про"
 
 DB_PATH = 'channel.db'
 LOG_PATH = 'bot_logs.txt'
@@ -48,7 +48,14 @@ CHANNEL_THEMES = [
 ]
 
 # ============================================================
-# СПИСОК AI-ПРОВАЙДЕРОВ (АВТОПЕРЕКЛЮЧЕНИЕ)
+# ЦЕНЫ В ЗВЁЗДАХ
+# ============================================================
+
+PRICE_TEST_20 = 50
+PRICE_COACH = 100
+
+# ============================================================
+# AI-ПРОВАЙДЕРЫ
 # ============================================================
 
 AI_PROVIDERS = [
@@ -59,19 +66,19 @@ AI_PROVIDERS = [
         "api_key": "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"
     },
     {
-        "name": "G4F (Backup)",
+        "name": "G4F",
         "url": "https://api.g4f.icu/v1/chat/completions",
         "model": "gpt-4o-mini",
         "api_key": ""
     },
     {
-        "name": "Pawan (Backup)",
+        "name": "Pawan",
         "url": "https://api.pawan.krd/v1/chat/completions",
         "model": "gpt-3.5-turbo",
         "api_key": ""
     },
     {
-        "name": "SHN (Backup)",
+        "name": "SHN",
         "url": "https://chatgpt-api.shn.hk/v1/chat/completions",
         "model": "gpt-3.5-turbo",
         "api_key": ""
@@ -192,28 +199,20 @@ def ask_ai(system, user, max_tokens=3000, retries=2):
     return None
 
 # ============================================================
-# ГЕНЕРАЦИЯ СУПЕР-КАРТИНОК (AGNES AI С ПРОМПТОМ ДЛЯ ЕВРОПЕЙЦЕВ)
+# ГЕНЕРАЦИЯ СУПЕР-КАРТИНОК (AGNES AI + ЕВРОПА)
 # ============================================================
 
 def generate_image(prompt, width=1024, height=768):
-    """Генерация картинки через Agnes AI с правильным промптом"""
     try:
         logger.info("🖼 Генерация супер-картинки через Agnes AI...")
         
-        # ДОПОЛНЯЕМ ПРОМПТ ДЛЯ ЕВРОПЕЙЦЕВ И ПОЗИТИВА
-        full_prompt = f"""Hyper-realistic, cinematic photography style. {prompt}
-        
-Subject: European, Caucasian appearance, light skin, natural glowing complexion. Warm beaming smile, relaxed confident posture, exuding calmness, self-acceptance, and positive energy. Open body language, warm golden sunlight.
-
-Environment: Sunny day, golden hour lighting, warm sunlight filtering through leaves, soft lens flare. Lush green grass, trees, flowers in soft bloom. Vibe: peaceful, joyful, effortless beauty.
-
-Lighting: Soft golden backlight, rim light on hair and shoulders, warm skin tones, natural shadows.
-
-Style: Photorealistic, high detail, natural skin texture, no airbrushing, no plastic look. Magazine editorial quality, warm film-like color grading with amber and honey tones.
-
-Negative prompt: Asian face, Korean features, Japanese features, Chinese features, anime, cartoon, illustration, 3D render, plastic skin, blurry face, distorted face, stiff pose, over-saturated, cold tones, moody atmosphere, dark shadows, sad expression, angry expression, overly serious.
-
-Quality: 8K, masterpiece, award-winning photography, high detail, rich textures, natural movement."""
+        full_prompt = f"""Hyper-realistic, cinematic photography. {prompt}
+Subject: European, Caucasian, light skin, natural glow, warm smile, relaxed, positive energy, open body language.
+Environment: Sunny, golden hour, warm sunlight, soft lens flare, lush green, peaceful, joyful.
+Lighting: Soft golden backlight, warm skin tones, natural shadows.
+Style: Photorealistic, high detail, natural texture, no airbrushing, magazine quality, warm amber tones.
+Negative prompt: Asian, anime, cartoon, 3D render, plastic, blurry, stiff, cold, dark, sad.
+Quality: 8K, masterpiece."""
         
         headers = {
             "Authorization": f"Bearer {AGNES_API_KEY}",
@@ -260,12 +259,10 @@ Quality: 8K, masterpiece, award-winning photography, high detail, rich textures,
     except Exception as e:
         logger.error(f"❌ Ошибка генерации картинки: {e}")
     
-    # Резерв — если Agnes AI не сработал, пробуем Pollinations
     logger.info("🔄 Переключаюсь на резервный генератор Pollinations...")
     return generate_image_pollinations(prompt)
 
 def generate_image_pollinations(prompt):
-    """Резервная генерация через Pollinations"""
     try:
         clean_prompt = prompt[:200].replace(' ', '%20').replace('"', '').replace("'", "").replace(',', '%2C')
         url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=1024&height=768&nologo=true&seed={random.randint(1,999999)}"
@@ -347,12 +344,13 @@ def init_database():
         images_generated INTEGER DEFAULT 0,
         consultations_count INTEGER DEFAULT 0,
         referrals_count INTEGER DEFAULT 0,
+        gifts_used INTEGER DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
     c.execute("SELECT COUNT(*) FROM stats")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO stats (free_count, paid_test_count, coach_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count, referrals_count) VALUES (0, 0, 0, 0, 0, 0, 0, 0, 0, 0)")
+        c.execute("INSERT INTO stats (free_count, paid_test_count, coach_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count, referrals_count, gifts_used) VALUES (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)")
     
     c.execute('''CREATE TABLE IF NOT EXISTS consultation_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -609,6 +607,72 @@ def process_referral(referral_code, new_user_id):
     return False
 
 # ============================================================
+# ОПЛАТА ЧЕРЕЗ TELEGRAM STARS
+# ============================================================
+
+def send_invoice(chat_id, product, amount):
+    if product == "test_20":
+        title = "🧠 Тест из 20 вопросов"
+        desc = "Полный психологический разбор личности. Результат через 30 секунд."
+    elif product == "coach":
+        title = "🎯 Коуч-сеанс"
+        desc = "25 вопросов + полный разбор + план действий + задания на неделю."
+    else:
+        return
+    
+    try:
+        bot.send_invoice(
+            chat_id=chat_id,
+            title=title,
+            description=desc,
+            provider_token="",
+            currency="XTR",
+            prices=[{"label": title, "amount": amount}],
+            invoice_payload=product,
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка отправки инвойса: {e}")
+        return False
+
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def handle_pre_checkout(query):
+    try:
+        bot.answer_pre_checkout_query(query.id, ok=True)
+    except Exception as e:
+        logger.error(f"Ошибка pre_checkout: {e}")
+        bot.answer_pre_checkout_query(query.id, ok=False, error_message="Ошибка оплаты")
+
+@bot.message_handler(content_types=['successful_payment'])
+def handle_successful_payment(message):
+    try:
+        chat_id = message.chat.id
+        payment = message.successful_payment
+        product = payment.invoice_payload
+        
+        c.execute("""INSERT INTO payments (chat_id, amount, product, status) VALUES (?, ?, ?, ?)""",
+                  (chat_id, payment.total_amount, product, "completed"))
+        conn.commit()
+        
+        if product == "test_20":
+            c.execute("UPDATE stats SET paid_test_count = paid_test_count + 1")
+            conn.commit()
+            bot.send_message(chat_id, "✅ Оплата прошла успешно!\n\nТы можешь пройти полный тест из 20 вопросов.\nНажми «🎯 Пройти тест» и выбери «💎 Платный».")
+            
+        elif product == "coach":
+            c.execute("UPDATE stats SET coach_count = coach_count + 1")
+            conn.commit()
+            bot.send_message(chat_id, "✅ Оплата прошла успешно!\n\nТы можешь пройти коуч-сеанс.\nНажми «👑 Админ-панель» → «🎯 Сеанс коучинга».")
+            
+    except Exception as e:
+        logger.error(f"Ошибка обработки оплаты: {e}")
+
+# ============================================================
 # ПЛАНИРОВЩИК
 # ============================================================
 
@@ -653,7 +717,13 @@ def scheduler_loop():
                 if task["type"] == "post":
                     post = generate_post(task["topic"])
                     if post:
-                        bot.send_message(CHANNEL_ID, post)
+                        img = generate_post_image(task["topic"])
+                        if img:
+                            with open(img, 'rb') as photo:
+                                bot.send_photo(CHANNEL_ID, photo, caption=post)
+                            os.remove(img)
+                        else:
+                            bot.send_message(CHANNEL_ID, post)
                 elif task["type"] == "test":
                     questions = generate_test_questions(task["topic"], 10)
                     if questions:
@@ -723,15 +793,15 @@ def admin_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('📝 Новый пост', '🧠 Тест в канал')
     mk.add('🖼 Картинка в канал', '🎯 Сеанс коучинга')
-    mk.add('🎁 Создать подарок', '📊 Статистика')
-    mk.add('⏰ Расписание', '🎫 Создать промокод')
+    mk.add('🎁 Создать подарок', '🎫 Создать промокод')
+    mk.add('📊 Статистика', '⏰ Расписание')
     mk.add('📋 Логи', '👑 Главное меню')
     return mk
 
 def test_type_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🧠 Бесплатный (10 вопросов)')
-    mk.add('💎 Платный (20 вопросов)')
+    mk.add('💎 Платный (20 вопросов) — 50 Stars')
     mk.add('🔙 Назад')
     return mk
 
@@ -879,7 +949,7 @@ def back_to_main(message):
 def free_test(message):
     show_topics(message, 'free', 10)
 
-@bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов)')
+@bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов) — 50 Stars')
 def paid_test(message):
     chat_id = message.chat.id
     c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
@@ -889,7 +959,7 @@ def paid_test(message):
         conn.commit()
         show_topics(message, 'paid', 20)
     else:
-        bot.send_message(chat_id, "💎 Платный тест пока недоступен. Скоро появится!", reply_markup=test_type_menu())
+        send_invoice(chat_id, "test_20", PRICE_TEST_20)
 
 @bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов) — БЕСПЛАТНО (бонус)')
 def paid_test_bonus(message):
@@ -1019,12 +1089,26 @@ def finish_test(chat_id):
         
         if analysis:
             bot.send_message(chat_id, f"🔍 АНАЛИЗ\n\n{analysis}", reply_markup=get_main_menu(chat_id))
+            
+            if is_paid:
+                mk = telebot.types.InlineKeyboardMarkup()
+                mk.add(telebot.types.InlineKeyboardButton("🎯 Коуч-сеанс за 100 Stars", callback_data="buy_coach"))
+                bot.send_message(chat_id, "🎯 Хочешь разобраться глубже? Пройди коуч-сеанс — 25 вопросов + план действий.", reply_markup=mk)
         else:
             bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
         if chat_id in sessions:
             del sessions[chat_id]
     except Exception as e:
         logger.error(f"Ошибка: {e}")
+
+@bot.callback_query_handler(func=lambda c: c.data == 'buy_coach')
+def buy_coach(c):
+    try:
+        chat_id = c.message.chat.id
+        send_invoice(chat_id, "coach", PRICE_COACH)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+    c.answer()
 
 # ============================================================
 # АДМИН-ПАНЕЛЬ
@@ -1109,7 +1193,7 @@ def admin_stats(message):
     try:
         if message.chat.id not in ADMIN_IDS:
             return
-        c.execute("SELECT free_count, paid_test_count, coach_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count, referrals_count FROM stats")
+        c.execute("SELECT free_count, paid_test_count, coach_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count, referrals_count, gifts_used FROM stats")
         stats_row = c.fetchone()
         c.execute("SELECT COUNT(*) FROM users")
         users_count = c.fetchone()[0]
@@ -1130,8 +1214,9 @@ def admin_stats(message):
 🖼 Супер-картинок: {stats_row[6] if stats_row else 0}
 🎯 Консультаций: {stats_row[7] if stats_row else 0}
 👥 Рефералов: {stats_row[8] if stats_row else 0}
-⏳ Чек-инов: {pending_checkins}
-🎁 Подарков: {gifts_count}"""
+🎁 Подарков активировано: {stats_row[9] if stats_row else 0}
+🎁 Подарков создано: {gifts_count}
+⏳ Чек-инов: {pending_checkins}"""
         bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -1231,6 +1316,12 @@ def start_consultation(message):
     try:
         chat_id = message.chat.id
         if chat_id not in ADMIN_IDS:
+            return
+        
+        # Проверяем, оплачен ли сеанс или есть подарок
+        c.execute("SELECT id FROM payments WHERE chat_id = ? AND (product = 'coach' OR product = 'coach_gift') AND status = 'completed'", (chat_id,))
+        if not c.fetchone():
+            send_invoice(chat_id, "coach", PRICE_COACH)
             return
         
         bot.send_message(
@@ -1527,7 +1618,73 @@ def handle_theme_selection(message):
         bot.send_message(chat_id, f"❌ Ошибка: {str(e)}", reply_markup=admin_menu())
 
 # ============================================================
-# ПОДАРОЧНЫЕ СЕАНСЫ
+# ПРОМОКОДЫ (БЕСПЛАТНЫЙ ТЕСТ 20 ВОПРОСОВ)
+# ============================================================
+
+@bot.message_handler(func=lambda m: m.text == '🎫 Создать промокод')
+def create_promo(message):
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        bot.send_message(message.chat.id, "🎫 Введите код (латиница, 3+ символов):")
+        bot.register_next_step_handler(message, process_create_promo)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+def process_create_promo(message):
+    try:
+        chat_id = message.chat.id
+        code = message.text.strip().upper()
+        if code == "ОТМЕНА":
+            bot.send_message(chat_id, "❌ Отменено")
+            return
+        if not code or len(code) < 3:
+            bot.send_message(chat_id, "❌ Минимум 3 символа", reply_markup=admin_menu())
+            return
+        try:
+            c.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
+                      (code, chat_id, datetime.now().isoformat()))
+            conn.commit()
+            bot.send_message(chat_id, f"✅ Промокод создан!\n\n📌 Код: `{code}`\nДаёт 1 бесплатный тест из 20 вопросов.", parse_mode='Markdown', reply_markup=admin_menu())
+        except sqlite3.IntegrityError:
+            bot.send_message(chat_id, "❌ Уже существует", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+@bot.message_handler(func=lambda m: m.text == '🎫 Активировать промокод')
+def activate_promo(message):
+    try:
+        bot.send_message(message.chat.id, "🎫 Введите промокод:", reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(message, process_promo)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+def process_promo(message):
+    try:
+        chat_id = message.chat.id
+        code = message.text.strip().upper()
+        c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
+        row = c.fetchone()
+        if not row:
+            bot.send_message(chat_id, "❌ Неверный код", reply_markup=get_main_menu(chat_id))
+            return
+        promo_id, used_by = row
+        if used_by != 0:
+            bot.send_message(chat_id, "❌ Уже использован", reply_markup=get_main_menu(chat_id))
+            return
+        c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", 
+                  (chat_id, datetime.now().isoformat(), promo_id))
+        conn.commit()
+        c.execute("UPDATE stats SET promo_used = promo_used + 1")
+        conn.commit()
+        c.execute("UPDATE users SET bonus_tests = bonus_tests + 1 WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+        bot.send_message(chat_id, "🎉 Промокод активирован! Ты получил 1 бесплатный тест из 20 вопросов. Нажми «🎯 Пройти тест» и выбери платный.", reply_markup=get_main_menu(chat_id))
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+# ============================================================
+# ПОДАРКИ (БЕСПЛАТНЫЙ КОУЧ-СЕАНС)
 # ============================================================
 
 @bot.message_handler(func=lambda m: m.text == '🎁 Создать подарок')
@@ -1576,7 +1733,7 @@ def process_gift_expires(message):
         conn.commit()
         bot.send_message(
             chat_id,
-            f"✅ ПОДАРОК СОЗДАН!\n\n🎁 Код: `{code}`\n📊 Сеансов: {max_uses}\n📅 Действует до: {expires_at[:10]}",
+            f"✅ ПОДАРОК СОЗДАН!\n\n🎁 Код: `{code}`\n📊 Сеансов: {max_uses}\n📅 Действует до: {expires_at[:10]}\nДаёт бесплатный коуч-сеанс.",
             parse_mode='Markdown',
             reply_markup=admin_menu()
         )
@@ -1591,7 +1748,7 @@ def activate_gift_start(message):
         chat_id = message.chat.id
         bot.send_message(
             chat_id,
-            "🎁 Введите код:",
+            "🎁 Введите код подарка:",
             reply_markup=telebot.types.ReplyKeyboardRemove()
         )
         bot.register_next_step_handler(message, process_gift_activation)
@@ -1616,110 +1773,15 @@ def process_gift_activation(message):
             return
         c.execute("UPDATE gifts SET used_count = used_count + 1 WHERE id = ?", (gift_id,))
         conn.commit()
-        bot.send_message(
-            chat_id,
-            "🎉 ПОДАРОК АКТИВИРОВАН!\n\nТы получаешь бесплатный коуч-сеанс.\n\nНажми «✅ Начать сеанс»",
-            reply_markup=telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1).add('✅ Начать сеанс')
-        )
-        if chat_id not in consultations:
-            consultations[chat_id] = {}
-        consultations[chat_id]['is_gift'] = True
-        consultations[chat_id]['gift_id'] = gift_id
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        bot.send_message(chat_id, "❌ Ошибка.", reply_markup=get_main_menu(chat_id))
-
-@bot.message_handler(func=lambda m: m.text == '✅ Начать сеанс')
-def start_gift_consultation(message):
-    try:
-        chat_id = message.chat.id
-        if chat_id not in consultations or not consultations[chat_id].get('is_gift'):
-            bot.send_message(chat_id, "❌ Нет активного подарка.", reply_markup=get_main_menu(chat_id))
-            return
-        consultations[chat_id]['is_gift'] = False
-        bot.send_message(chat_id, "🎯 Генерирую вопросы...\n⏱ Ожидание до 30 сек", reply_markup=telebot.types.ReplyKeyboardRemove())
-        questions = generate_consultation_questions()
-        if not questions:
-            bot.send_message(chat_id, "❌ Ошибка.", reply_markup=get_main_menu(chat_id))
-            return
-        c.execute("""INSERT INTO consultation_sessions (chat_id, questions, current_q, is_active) VALUES (?, ?, ?, ?)""",
-                  (chat_id, json.dumps(questions), 0, 1))
+        c.execute("UPDATE stats SET gifts_used = gifts_used + 1")
         conn.commit()
-        session_id = c.lastrowid
-        consultations[chat_id] = {
-            "session_id": session_id,
-            "questions": questions,
-            "answers": [],
-            "q": 0,
-            "is_gift": True
-        }
-        send_consultation_question(chat_id)
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        bot.send_message(chat_id, "❌ Ошибка.", reply_markup=get_main_menu(chat_id))
-
-# ============================================================
-# ПРОМОКОДЫ
-# ============================================================
-
-@bot.message_handler(func=lambda m: m.text == '🎫 Создать промокод')
-def create_promo(message):
-    try:
-        if message.chat.id not in ADMIN_IDS:
-            return
-        bot.send_message(message.chat.id, "🎫 Введите код (латиница, 3+ символов):")
-        bot.register_next_step_handler(message, process_create_promo)
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-
-def process_create_promo(message):
-    try:
-        chat_id = message.chat.id
-        code = message.text.strip().upper()
-        if code == "ОТМЕНА":
-            bot.send_message(chat_id, "❌ Отменено")
-            return
-        if not code or len(code) < 3:
-            bot.send_message(chat_id, "❌ Минимум 3 символа", reply_markup=admin_menu())
-            return
-        try:
-            c.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
-                      (code, chat_id, datetime.now().isoformat()))
-            conn.commit()
-            bot.send_message(chat_id, f"✅ Промокод: `{code}`", reply_markup=admin_menu())
-        except sqlite3.IntegrityError:
-            bot.send_message(chat_id, "❌ Уже существует", reply_markup=admin_menu())
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-
-@bot.message_handler(func=lambda m: m.text == '🎫 Активировать промокод')
-def activate_promo(message):
-    try:
-        bot.send_message(message.chat.id, "🎫 Введите промокод:", reply_markup=telebot.types.ReplyKeyboardRemove())
-        bot.register_next_step_handler(message, process_promo)
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-
-def process_promo(message):
-    try:
-        chat_id = message.chat.id
-        code = message.text.strip().upper()
-        c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
-        row = c.fetchone()
-        if not row:
-            bot.send_message(chat_id, "❌ Неверный код", reply_markup=get_main_menu(chat_id))
-            return
-        promo_id, used_by = row
-        if used_by != 0:
-            bot.send_message(chat_id, "❌ Уже использован", reply_markup=get_main_menu(chat_id))
-            return
-        c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", (chat_id, datetime.now().isoformat(), promo_id))
+        # Записываем пользователю бонусный коуч-сеанс
+        c.execute("INSERT INTO payments (chat_id, amount, product, status) VALUES (?, 0, 'coach_gift', 'completed')", (chat_id,))
         conn.commit()
-        c.execute("UPDATE stats SET promo_used = promo_used + 1")
-        conn.commit()
-        bot.send_message(chat_id, "🎉 Промокод активирован!", reply_markup=get_main_menu(chat_id))
+        bot.send_message(chat_id, "🎉 ПОДАРОК АКТИВИРОВАН!\n\nТы получил бесплатный коуч-сеанс.\nНажми «👑 Админ-панель» → «🎯 Сеанс коучинга»", reply_markup=get_main_menu(chat_id))
     except Exception as e:
         logger.error(f"Ошибка: {e}")
+        bot.send_message(chat_id, "❌ Ошибка при активации.", reply_markup=get_main_menu(chat_id))
 
 # ============================================================
 # ЗАПУСК БОТА
