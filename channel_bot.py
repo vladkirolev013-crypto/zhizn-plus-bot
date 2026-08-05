@@ -10,7 +10,7 @@ import uuid
 import base64
 import random
 import glob
-from datetime import datetime, timedelta
+from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 import urllib3
@@ -197,7 +197,7 @@ TEST_TOPICS = {
 # ГЕНЕРАТОРЫ
 # ============================================
 def generate_test_questions(topic, count=10):
-    system = """Ты — профессиональный психолог. Составь глубокие вопросы без штампов."""
+    system = "Ты — профессиональный психолог. Составь глубокие вопросы без штампов."
     user = f"""Составь {count} вопросов на тему "{topic}" в формате JSON:
     [
         {{
@@ -240,7 +240,7 @@ def generate_test_questions(topic, count=10):
         return None
 
 def generate_analysis_free(topic, answers, score, total):
-    system = """Ты — клинический психолог. Дай глубокий разбор личности. Без книг."""
+    system = "Ты — клинический психолог. Дай глубокий разбор личности. Без книг."
     user = f"""Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}.
     Дай 2 инсайта и 2 вопроса для размышления. Объём: 700+ знаков."""
     response = ask_giga_with_wait(system, user, max_tokens=2000)
@@ -249,7 +249,7 @@ def generate_analysis_free(topic, answers, score, total):
     return response
 
 def generate_analysis_paid(topic, answers, score, total):
-    system = """Ты — команда: клинический психолог и коуч мирового уровня."""
+    system = "Ты — команда: клинический психолог и коуч мирового уровня."
     user = f"""Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}.
     Дай разбор: портрет, 2 инсайта, книги, упражнения, видео. Объём: 1400+ знаков."""
     response = ask_giga_with_wait(system, user, max_tokens=3000)
@@ -266,7 +266,7 @@ def generate_analysis(topic, answers, score, total, is_paid):
 def generate_post():
     themes = ["энергия", "сила", "радость", "страхи", "любовь", "благодарность"]
     theme = random.choice(themes)
-    system = """Ты — психолог и коуч. Пиши посты без пафоса, с НЛП."""
+    system = "Ты — психолог и коуч. Пиши посты без пафоса, с НЛП."
     user = f"""Напиши пост на тему "{theme}" для Telegram.
     Длина: 800-1000 знаков. Заголовок с эмодзи. Хештеги."""
     response = ask_giga_with_wait(system, user, max_tokens=2000)
@@ -642,7 +642,7 @@ def cmd_post(message):
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
-# ПЛАНИРОВЩИК (10:00, 13:00, 17:00)
+# ПЛАНИРОВЩИК
 # ============================================
 scheduler = BackgroundScheduler()
 
