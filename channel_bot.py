@@ -11,34 +11,39 @@ import base64
 import random
 import glob
 from datetime import datetime
-from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================
-# НАСТРОЙКИ
+# НАСТРОЙКИ - ВСЕ ДАННЫЕ УЖЕ ВСТАВЛЕНЫ
 # ============================================
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
+
+BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
+CHANNEL_ID = "@zhizn_plus"
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
 
-ADMIN_IDS = [8746212340]
-
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не установлен!")
+
+# ВАШ TELEGRAM ID
+ADMIN_IDS = [8746212340]
+
+# ============================================
+# НАСТРОЙКА ЛОГИРОВАНИЯ
+# ============================================
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ============================================
-# УБИВАЕМ 409 НАВСЕГДА
+# УДАЛЯЕМ ВЕБХУК (решает проблему 409)
 # ============================================
+
 def kill_409():
     try:
-        # Удаляем offset-файлы
         for f in glob.glob('update-offset-*.json'):
             try:
                 os.remove(f)
@@ -46,7 +51,6 @@ def kill_409():
             except:
                 pass
         
-        # Удаляем вебхук
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
         response = requests.post(url, json={"drop_pending_updates": True})
         logger.info(f"🧹 Удаление вебхука: {response.text}")
@@ -61,6 +65,7 @@ time.sleep(2)
 # ============================================
 # GIGACHAT
 # ============================================
+
 giga_token_cache = {"token": None, "expires": 0}
 
 def get_giga_token():
@@ -69,12 +74,16 @@ def get_giga_token():
     
     try:
         auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
-        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+        auth_b64 = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+        
         headers = {
-            'Authorization': f'Basic {base64_auth}',
+            'Authorization': f'Basic {auth_b64}',
             'RqUID': str(uuid.uuid4()),
             'Content-Type': 'application/x-www-form-urlencoded'
         }
+        
+        logger.info("🔄 Получение токена GigaChat...")
+        
         response = requests.post(
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
@@ -83,23 +92,32 @@ def get_giga_token():
             verify=False
         )
         
+        logger.info(f"📡 Статус ответа: {response.status_code}")
+        
         if response.status_code != 200:
-            logger.error(f"❌ Ошибка токена: {response.status_code}")
+            logger.error(f"❌ Ошибка токена: {response.status_code} - {response.text}")
             return None
-            
-        token = response.json()['access_token']
+        
+        data = response.json()
+        token = data.get('access_token')
+        
+        if not token:
+            logger.error(f"❌ Токен не найден в ответе: {data}")
+            return None
+        
         giga_token_cache["token"] = token
         giga_token_cache["expires"] = time.time() + 3500
-        logger.info("✅ Токен получен")
+        logger.info("✅ Токен GigaChat получен успешно")
         return token
         
     except Exception as e:
-        logger.error(f"❌ Ошибка токена: {e}")
+        logger.error(f"❌ Ошибка получения токена: {e}")
         return None
 
 def ask_giga(system, user, max_tokens=2500):
     token = get_giga_token()
     if not token:
+        logger.error("❌ Токен не получен")
         return None
     
     headers = {
@@ -107,6 +125,7 @@ def ask_giga(system, user, max_tokens=2500):
         'RqUID': str(uuid.uuid4()),
         'Content-Type': 'application/json'
     }
+    
     payload = {
         "model": "GigaChat",
         "messages": [
@@ -118,40 +137,34 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
+        logger.info("📤 Отправляю запрос в GigaChat...")
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
             json=payload,
-            timeout=30,
+            timeout=60,
             verify=False
         )
         
+        logger.info(f"📡 Статус ответа: {response.status_code}")
+        
         if response.status_code != 200:
+            logger.error(f"❌ Ошибка GigaChat: {response.status_code} - {response.text[:500]}")
             return None
         
-        return response.json()['choices'][0]['message']['content']
+        result = response.json()
+        content = result['choices'][0]['message']['content']
+        logger.info("✅ Ответ GigaChat получен")
+        return content
         
-    except:
+    except Exception as e:
+        logger.error(f"❌ Ошибка GigaChat: {e}")
         return None
-
-def ask_giga_with_wait(system, user, max_tokens=2500):
-    start = time.time()
-    result = ask_giga(system, user, max_tokens)
-    elapsed = time.time() - start
-    
-    if elapsed < 30:
-        time.sleep(30 - elapsed)
-    
-    return result
-
-# ============================================
-# TELEGRAM БОТ
-# ============================================
-bot = telebot.TeleBot(BOT_TOKEN)
 
 # ============================================
 # БАЗА ДАННЫХ
 # ============================================
+
 DB_PATH = 'channel.db'
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
@@ -165,10 +178,12 @@ c.execute('''CREATE TABLE IF NOT EXISTS daily_tests
 c.execute('''CREATE TABLE IF NOT EXISTS stats 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, 
               free_count INTEGER DEFAULT 0, 
-              paid_count INTEGER DEFAULT 0)''')
+              paid_count INTEGER DEFAULT 0,
+              promo_used INTEGER DEFAULT 0)''')
+
 c.execute("SELECT COUNT(*) FROM stats")
 if c.fetchone()[0] == 0:
-    c.execute("INSERT INTO stats (free_count, paid_count) VALUES (0, 0)")
+    c.execute("INSERT INTO stats (free_count, paid_count, promo_used) VALUES (0, 0, 0)")
 
 c.execute('''CREATE TABLE IF NOT EXISTS user_sessions 
              (chat_id INTEGER PRIMARY KEY, 
@@ -179,11 +194,26 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_sessions
               scores TEXT, 
               is_paid INTEGER, 
               result TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS promocodes 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              code TEXT UNIQUE,
+              created_by INTEGER,
+              created_at TEXT,
+              used_by INTEGER DEFAULT 0,
+              used_at TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS posts_history
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              content TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
 conn.commit()
 
 # ============================================
-# ТЕМЫ
+# ГЕНЕРАТОРЫ
 # ============================================
+
 TEST_TOPICS = {
     "психология": "🧠 Психология",
     "отношения": "💕 Отношения",
@@ -193,12 +223,11 @@ TEST_TOPICS = {
     "личность": "🌟 Личность"
 }
 
-# ============================================
-# ГЕНЕРАТОРЫ
-# ============================================
 def generate_test_questions(topic, count=10):
-    system = "Ты — профессиональный психолог. Составь глубокие вопросы без штампов."
-    user = f"""Составь {count} вопросов на тему "{topic}" в формате JSON:
+    system = """Ты — профессиональный психолог с 25-летним стажем.
+    Вопросы должны быть глубокими, небанальными, без штампов."""
+    
+    user = f"""Составь {count} глубоких вопросов на тему "{topic}" в формате JSON:
     [
         {{
             "question": "текст вопроса?",
@@ -217,7 +246,8 @@ def generate_test_questions(topic, count=10):
         }}
     ]
     Верни ТОЛЬКО JSON."""
-    response = ask_giga_with_wait(system, user, max_tokens=3000)
+    
+    response = ask_giga(system, user, max_tokens=3000)
     if not response:
         return None
     
@@ -226,112 +256,100 @@ def generate_test_questions(topic, count=10):
         end = response.rfind(']') + 1
         if start == -1 or end == -1:
             return None
+        
         data = json.loads(response[start:end])
         if isinstance(data, dict) and 'questions' in data:
             data = data['questions']
+        
         parsed = []
         for q in data:
             if 'question' in q and 'options' in q:
                 if 'scores' not in q:
                     q['scores'] = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
                 parsed.append(q)
+        
         return parsed[:count] if parsed else None
-    except:
+    except Exception as e:
+        logger.error(f"Ошибка парсинга: {e}")
         return None
-
-def generate_analysis_free(topic, answers, score, total):
-    system = "Ты — клинический психолог. Дай глубокий разбор личности. Без книг."
-    user = f"""Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}.
-    Дай 2 инсайта и 2 вопроса для размышления. Объём: 700+ знаков."""
-    response = ask_giga_with_wait(system, user, max_tokens=2000)
-    if not response or len(response) < 500:
-        return None
-    return response
-
-def generate_analysis_paid(topic, answers, score, total):
-    system = "Ты — команда: клинический психолог и коуч мирового уровня."
-    user = f"""Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}.
-    Дай разбор: портрет, 2 инсайта, книги, упражнения, видео. Объём: 1400+ знаков."""
-    response = ask_giga_with_wait(system, user, max_tokens=3000)
-    if not response or len(response) < 1000:
-        return None
-    return response
 
 def generate_analysis(topic, answers, score, total, is_paid):
     if is_paid:
-        return generate_analysis_paid(topic, answers, score, total)
+        system = """Ты — команда: клинический психолог и коуч мирового уровня.
+        Психолог даёт 2 инсайта. Коуч даёт 3 конкретных шага на сегодня.
+        ВСЁ НА РУССКОМ. Объём: 1400+ знаков."""
+        
+        user = f"""Тема: {topic}
+Ответы: {answers}
+Баллы: {score} из {total}
+Проведи полный разбор личности. Включи: портрет, 2 инсайта, шаги на неделю, книги, упражнения, видео."""
     else:
-        return generate_analysis_free(topic, answers, score, total)
+        system = """Ты — клинический психолог с 25-летним стажем.
+        Говори коротко, но ёмко. Используй НЛП-язык.
+        Без воды, без шаблонов.
+        Объём: 700+ знаков. БЕЗ книг и упражнений."""
+        
+        user = f"""Тема: {topic}
+Ответы: {answers}
+Баллы: {score} из {total}
+Проведи глубокий разбор личности. Дай 2 инсайта и 2 вопроса для размышления."""
+    
+    return ask_giga(system, user, max_tokens=3000 if is_paid else 2000)
 
 def generate_post():
-    themes = ["энергия", "сила", "радость", "страхи", "любовь", "благодарность"]
+    themes = [
+        "утренняя энергия", "внутренняя сила", "радость в простых вещах",
+        "преодоление страхов", "любовь к себе", "благодарность",
+        "мотивация", "осознанность", "отношения", "финансовое мышление"
+    ]
     theme = random.choice(themes)
-    system = "Ты — психолог и коуч. Пиши посты без пафоса, с НЛП."
+    
+    system = """Ты — психолог, который пишет посты, от которых хочется действовать.
+    Используй НЛП-язык. Без слащавости. Каждый пост уникальный."""
+    
     user = f"""Напиши пост на тему "{theme}" для Telegram.
-    Длина: 800-1000 знаков. Заголовок с эмодзи. Хештеги."""
-    response = ask_giga_with_wait(system, user, max_tokens=2000)
+    Длина: 800–1000 знаков. Заголовок с эмодзи. Практический совет.
+    Мотивирующая фраза. Хештеги."""
+    
+    response = ask_giga(system, user, max_tokens=2000)
     if not response or len(response) < 700:
         return None
     return response
 
 # ============================================
-# СЕССИИ
+# TELEGRAM БОТ
 # ============================================
-def load_session(chat_id):
-    c.execute("SELECT topic, questions, current_q, answers, scores, is_paid, result FROM user_sessions WHERE chat_id=?", (chat_id,))
-    row = c.fetchone()
-    if row:
-        return {
-            'topic': row[0],
-            'questions': json.loads(row[1]),
-            'current_q': row[2],
-            'answers': json.loads(row[3]) if row[3] else [],
-            'scores': json.loads(row[4]) if row[4] else [],
-            'is_paid': bool(row[5]),
-            'result': row[6]
-        }
-    return None
 
-def save_session(chat_id, session):
-    c.execute("""INSERT OR REPLACE INTO user_sessions 
-                 (chat_id, topic, questions, current_q, answers, scores, is_paid, result) 
-                 VALUES (?,?,?,?,?,?,?,?)""",
-              (chat_id, session['topic'], json.dumps(session['questions']), 
-               session['current_q'], json.dumps(session['answers']), 
-               json.dumps(session['scores']), int(session['is_paid']), 
-               session.get('result', '')))
-    conn.commit()
-
-def delete_session(chat_id):
-    c.execute("DELETE FROM user_sessions WHERE chat_id=?", (chat_id,))
-    conn.commit()
+bot = telebot.TeleBot(BOT_TOKEN)
 
 # ============================================
-# ВЕБ-СЕРВЕР
+# ВЕБ-СЕРВЕР ДЛЯ RENDER
 # ============================================
+
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "OK"
+    return "✅ Бот работает!"
 
 @app.route('/health')
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "time": datetime.now().isoformat()}
 
 def run_flask():
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ============================================
 # МЕНЮ
 # ============================================
+
 def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🚀 Старт', '🎯 Пройти тест')
-    mk.add('❤️ О канале')
+    mk.add('🎫 Активировать промокод', '❤️ О канале')
     if chat_id in ADMIN_IDS:
         mk.add('👑 Админ-панель')
     return mk
@@ -339,7 +357,7 @@ def get_main_menu(chat_id):
 def admin_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('📤 Отправить пост', '🧠 Тест в канал')
-    mk.add('📊 Статистика')
+    mk.add('📊 Статистика', '🎫 Создать промокод')
     mk.add('👑 Главное меню')
     return mk
 
@@ -353,55 +371,27 @@ def test_type_menu():
 # ============================================
 # ОБРАБОТЧИКИ
 # ============================================
+
 sessions = {}
 
 @bot.message_handler(commands=['start'])
 def start(message):
     chat_id = message.chat.id
-    if ' ' in message.text:
-        param = message.text.split(' ', 1)[1]
-        if param.startswith('daily_'):
-            try:
-                _, topic, tid = param.split('_')
-                c.execute("SELECT questions FROM daily_tests WHERE id=?", (tid,))
-                row = c.fetchone()
-                if row:
-                    questions = json.loads(row[0])
-                    sessions[chat_id] = {
-                        'topic': topic,
-                        'questions': questions,
-                        'answers': [],
-                        'q': 0,
-                        'scores': [],
-                        'is_paid': False
-                    }
-                    bot.send_message(chat_id, f"📌 Ежедневный тест: {topic}")
-                    send_question(chat_id)
-                    return
-            except:
-                pass
-    welcome = "🌟 Добро пожаловать в бота Жизнь+!\n\nНажми «🎯 Пройти тест» или «❤️ О канале»."
+    welcome = "🌟 Добро пожаловать в бота Жизнь+!\n\nНажми «🎯 Пройти тест» или «🎫 Активировать промокод»."
     bot.send_message(chat_id, welcome, reply_markup=get_main_menu(chat_id))
 
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
 def start_button(message):
     start(message)
 
-@bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
-def back_to_main_from_admin(message):
-    start(message)
-
-@bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
-def admin_panel_button(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
-
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
-    text = "Жизнь+ — канал о психологии и саморазвитии."
+    text = "Жизнь+ — это пространство, где каждый день начинается с новой силы."
     mk = telebot.types.InlineKeyboardMarkup()
-    mk.add(telebot.types.InlineKeyboardButton("📢 Перейти в канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"))
+    mk.add(telebot.types.InlineKeyboardButton(
+        "📢 Перейти в канал",
+        url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"
+    ))
     bot.send_message(message.chat.id, text, reply_markup=mk)
 
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
@@ -422,24 +412,19 @@ def free_test(message):
 
 @bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов)')
 def paid_test(message):
-    chat_id = message.chat.id
-    if chat_id in ADMIN_IDS:
-        show_topics(message, 'paid', 20)
-    else:
-        bot.send_message(
-            chat_id,
-            "💎 Платный тест — 50 ₽\nА пока пройдите бесплатный.",
-            reply_markup=test_type_menu()
-        )
+    show_topics(message, 'paid', 20)
 
 def show_topics(message, test_type, count):
     mk = telebot.types.InlineKeyboardMarkup(row_width=2)
     for topic, emoji in TEST_TOPICS.items():
-        mk.add(telebot.types.InlineKeyboardButton(emoji, callback_data=f"{test_type}_{topic}_{count}"))
+        mk.add(telebot.types.InlineKeyboardButton(
+            emoji,
+            callback_data=f"{test_type}_{topic}_{count}"
+        ))
     mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
     bot.send_message(
         message.chat.id,
-        f"🎯 Выберите тему:\n{count} вопросов",
+        f"🎯 Выберите тему:\n\n{count} вопросов",
         reply_markup=mk
     )
 
@@ -448,11 +433,18 @@ def topic_callback(c):
     try:
         test_type, topic, count = c.data.split('_')
         is_paid = test_type == 'paid'
-        bot.edit_message_text("⏳ Генерация теста...", c.message.chat.id, c.message.message_id)
+        
+        bot.edit_message_text(
+            "⏳ Генерация теста...\nПодождите до 40 секунд.",
+            c.message.chat.id,
+            c.message.message_id
+        )
+        
         questions = generate_test_questions(topic, int(count))
         if not questions:
-            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест.")
+            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест. Попробуйте позже.")
             return
+        
         sessions[c.message.chat.id] = {
             'topic': topic,
             'questions': questions,
@@ -464,6 +456,7 @@ def topic_callback(c):
         bot.delete_message(c.message.chat.id, c.message.message_id)
         send_question(c.message.chat.id)
     except Exception as e:
+        logger.error(f"Ошибка: {e}")
         bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
 
 @bot.callback_query_handler(func=lambda c: c.data == 'cancel')
@@ -476,17 +469,22 @@ def send_question(chat_id):
     if not s:
         bot.send_message(chat_id, "❌ Активный тест не найден.")
         return
+    
     if s['q'] >= len(s['questions']):
         finish_test(chat_id)
         return
+    
     q = s['questions'][s['q']]
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     for opt, txt in q['options'].items():
         mk.add(f"{opt}) {txt}")
     mk.add('⏹ Прервать тест')
+    
     bot.send_message(
         chat_id,
-        f"📝 Вопрос {s['q']+1}/{len(s['questions'])}\n📌 {s['topic'].title()}\n\n{q['question']}",
+        f"📝 Вопрос {s['q']+1}/{len(s['questions'])}\n"
+        f"📌 Тема: {s['topic'].title()}\n\n"
+        f"{q['question']}",
         reply_markup=mk
     )
 
@@ -504,6 +502,7 @@ def handle_answer(message):
         return
     if s['q'] >= len(s['questions']):
         return
+    
     letter = message.text[0]
     q = s['questions'][s['q']]
     s['answers'].append(letter)
@@ -515,169 +514,220 @@ def finish_test(chat_id):
     s = sessions.get(chat_id)
     if not s:
         return
+    
     score = sum(s['scores'])
     total = len(s['questions']) * 3
     answers = ', '.join(s['answers'])
     is_paid = s.get('is_paid', False)
+    
     if is_paid:
         c.execute("UPDATE stats SET paid_count = paid_count + 1")
     else:
         c.execute("UPDATE stats SET free_count = free_count + 1")
     conn.commit()
-    bot.send_message(chat_id, f"📊 Результат: {score} из {total}\n⏳ Анализ...")
-    analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
-    if not analysis:
-        bot.send_message(chat_id, "❌ Не удалось сгенерировать анализ.")
-        del sessions[chat_id]
-        return
-    bot.send_message(chat_id, f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}", reply_markup=get_main_menu(chat_id))
+    
+    bot.send_message(
+        chat_id,
+        f"📊 Тест завершен!\n\n"
+        f"✅ Результат: {score} из {total}\n"
+        f"⏳ GigaChat генерирует анализ...\nДо 40 секунд."
+    )
+    
+    analysis = None
+    for attempt in range(3):
+        analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
+        if analysis:
+            break
+        time.sleep(2)
+        bot.send_message(chat_id, f"🔄 Попытка {attempt + 2}/3...")
+    
+    if analysis:
+        bot.send_message(
+            chat_id,
+            f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}",
+            reply_markup=get_main_menu(chat_id)
+        )
+    else:
+        bot.send_message(
+            chat_id,
+            f"❌ GigaChat временно не отвечает.\n\n"
+            f"✅ Ваш результат сохранён.",
+            reply_markup=get_main_menu(chat_id)
+        )
+    
     del sessions[chat_id]
-    bot.send_message(chat_id, "✨ Готово!", reply_markup=get_main_menu(chat_id))
 
 # ============================================
-# АДМИН-КНОПКИ
+# АДМИН-ФУНКЦИИ
 # ============================================
+
+@bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
+def admin_panel(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
+
+@bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
+def back_to_main_from_admin(message):
+    start(message)
+
 @bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
 def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
-    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 30 секунд.")
+    
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
     text = generate_post()
+    
     if not text:
         bot.send_message(message.chat.id, "❌ Не удалось сгенерировать пост.")
         return
-    bot.send_message(CHANNEL_ID, text)
-    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
+    
+    c.execute("INSERT INTO posts_history (content) VALUES (?)", (text,))
+    conn.commit()
+    
+    try:
+        bot.send_message(CHANNEL_ID, text)
+        bot.send_message(message.chat.id, "✅ Пост отправлен в канал!", reply_markup=admin_menu())
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка отправки: {e}", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
-def admin_test_to_channel(message):
+def admin_test(message):
     if message.chat.id not in ADMIN_IDS:
         return
-    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
-    for topic, emoji in TEST_TOPICS.items():
-        mk.add(telebot.types.InlineKeyboardButton(emoji, callback_data=f"admin_test_{topic}"))
-    mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="admin_cancel"))
-    bot.send_message(message.chat.id, "🎯 Выберите тему для теста в канал:", reply_markup=mk)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith('admin_test_'))
-def admin_test_topic_callback(c):
-    try:
-        topic = c.data.replace('admin_test_', '')
-        bot.edit_message_text(f"⏳ Генерация теста...", c.message.chat.id, c.message.message_id)
-        questions = generate_test_questions(topic, 10)
-        if not questions:
-            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест.")
-            return
-        c.execute("INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
-                  (topic, json.dumps(questions), datetime.now().isoformat()))
-        conn.commit()
-        test_id = c.lastrowid
-        mk = telebot.types.InlineKeyboardMarkup()
-        mk.add(telebot.types.InlineKeyboardButton("🎯 Пройти тест", url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"))
-        bot.send_message(CHANNEL_ID, f"🧠 ТЕСТ ПО ТЕМЕ: {topic.upper()}\n📊 10 вопросов", reply_markup=mk)
-        bot.edit_message_text(f"✅ Тест отправлен в канал!", c.message.chat.id, c.message.message_id)
-    except Exception as e:
-        bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
-
-@bot.callback_query_handler(func=lambda c: c.data == 'admin_cancel')
-def admin_cancel(c):
-    bot.delete_message(c.message.chat.id, c.message.message_id)
-    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=admin_menu())
+    
+    bot.send_message(message.chat.id, "🧠 Генерация теста для канала...")
+    
+    topic = random.choice(list(TEST_TOPICS.keys()))
+    questions = generate_test_questions(topic, 10)
+    
+    if not questions:
+        bot.send_message(message.chat.id, "❌ Не удалось сгенерировать тест.")
+        return
+    
+    c.execute("INSERT INTO daily_tests (topic, questions, created_at) VALUES (?, ?, ?)",
+              (topic, json.dumps(questions), datetime.now().isoformat()))
+    conn.commit()
+    test_id = c.lastrowid
+    
+    bot_info = bot.get_me()
+    test_url = f"https://t.me/{bot_info.username}?start=daily_{topic}_{test_id}"
+    
+    test_text = f"🧠 Ежедневный тест: «{topic.title()}»\n\n"
+    test_text += f"Пройдите тест прямо сейчас!\n"
+    test_text += f"🎯 {test_url}"
+    
+    bot.send_message(CHANNEL_ID, test_text)
+    bot.send_message(message.chat.id, "✅ Тест отправлен в канал!", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: m.text == '📊 Статистика')
 def admin_stats(message):
     if message.chat.id not in ADMIN_IDS:
         return
-    c.execute("SELECT free_count, paid_count FROM stats LIMIT 1")
-    row = c.fetchone()
-    if row:
-        free_count, paid_count = row
-        text = f"📊 Статистика\n🧠 Бесплатных: {free_count}\n💎 Платных: {paid_count}\nВсего: {free_count + paid_count}"
-    else:
-        text = "📊 Статистика пуста."
-    bot.send_message(message.chat.id, text)
+    
+    c.execute("SELECT free_count, paid_count, promo_used FROM stats")
+    stats_row = c.fetchone()
+    
+    c.execute("SELECT COUNT(*) FROM daily_tests")
+    tests_count = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM posts_history")
+    posts_count = c.fetchone()[0]
+    
+    stats_text = f"📊 СТАТИСТИКА\n\n"
+    stats_text += f"📝 Тестов в канале: {tests_count}\n"
+    stats_text += f"📤 Постов отправлено: {posts_count}\n"
+    stats_text += f"🧠 Бесплатных тестов: {stats_row[0] if stats_row else 0}\n"
+    stats_text += f"💎 Платных тестов: {stats_row[1] if stats_row else 0}\n"
+    stats_text += f"🎫 Активировано промокодов: {stats_row[2] if stats_row else 0}"
+    
+    bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
 
-# ============================================
-# ЕЖЕДНЕВНЫЙ ТЕСТ
-# ============================================
-def post_daily_test():
-    logger.info("⏳ Запуск ежедневного теста...")
-    topics = list(TEST_TOPICS.keys())
-    random.shuffle(topics)
-    topic = topics[0]
-    questions = generate_test_questions(topic, 10)
-    if questions:
-        c.execute("INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
-                  (topic, json.dumps(questions), datetime.now().isoformat()))
+@bot.message_handler(func=lambda m: m.text == '🎫 Создать промокод')
+def create_promo(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    bot.send_message(message.chat.id, "🎫 Введите название промокода (латиницей, без пробелов):")
+    bot.register_next_step_handler(message, process_create_promo)
+
+def process_create_promo(message):
+    chat_id = message.chat.id
+    code = message.text.strip().upper()
+    
+    if code == "ОТМЕНА":
+        bot.send_message(chat_id, "❌ Отменено.")
+        return
+    
+    if not code or len(code) < 3:
+        bot.send_message(chat_id, "❌ Минимум 3 символа.", reply_markup=admin_menu())
+        return
+    
+    try:
+        c.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
+                  (code, chat_id, datetime.now().isoformat()))
         conn.commit()
-        test_id = c.lastrowid
-        mk = telebot.types.InlineKeyboardMarkup()
-        mk.add(telebot.types.InlineKeyboardButton("🎯 Пройти тест", url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"))
-        bot.send_message(CHANNEL_ID, f"🧠 ЕЖЕДНЕВНЫЙ ТЕСТ ДНЯ!\n📌 Тема: {topic.title()}\n📊 10 вопросов", reply_markup=mk)
-        logger.info("✅ Ежедневный тест отправлен в канал")
-    else:
-        logger.error("❌ Не удалось сгенерировать ежедневный тест")
+        bot.send_message(
+            chat_id,
+            f"✅ Промокод создан!\n\n📌 Код: `{code}`",
+            reply_markup=admin_menu()
+        )
+    except sqlite3.IntegrityError:
+        bot.send_message(chat_id, "❌ Такой промокод уже существует.", reply_markup=admin_menu())
 
-# ============================================
-# АДМИН-КОМАНДЫ
-# ============================================
-@bot.message_handler(commands=['daily'])
-def cmd_daily(message):
-    if message.chat.id not in ADMIN_IDS:
+@bot.message_handler(func=lambda m: m.text == '🎫 Активировать промокод')
+def activate_promo(message):
+    bot.send_message(
+        message.chat.id,
+        "🎫 Введите промокод:",
+        reply_markup=telebot.types.ReplyKeyboardRemove()
+    )
+    bot.register_next_step_handler(message, process_promo)
+
+def process_promo(message):
+    chat_id = message.chat.id
+    code = message.text.strip().upper()
+    
+    c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
+    row = c.fetchone()
+    
+    if not row:
+        bot.send_message(chat_id, "❌ Неверный промокод.", reply_markup=get_main_menu(chat_id))
         return
-    bot.send_message(message.chat.id, "📤 Отправка ежедневного теста...")
-    post_daily_test()
-    bot.send_message(message.chat.id, "✅ Готово!")
-
-@bot.message_handler(commands=['post'])
-def cmd_post(message):
-    if message.chat.id not in ADMIN_IDS:
+    
+    promo_id, used_by = row
+    
+    if used_by != 0:
+        bot.send_message(chat_id, "❌ Этот промокод уже был использован.", reply_markup=get_main_menu(chat_id))
         return
-    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 30 секунд.")
-    text = generate_post()
-    if not text:
-        bot.send_message(message.chat.id, "❌ Не удалось сгенерировать пост.")
-        return
-    bot.send_message(CHANNEL_ID, text)
-    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
+    
+    c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", 
+              (chat_id, datetime.now().isoformat(), promo_id))
+    conn.commit()
+    
+    c.execute("UPDATE stats SET promo_used = promo_used + 1")
+    conn.commit()
+    
+    bot.send_message(
+        chat_id,
+        "🎉 Промокод активирован!\n\nТеперь вы можете пройти 💎 Платный тест бесплатно!",
+        reply_markup=get_main_menu(chat_id)
+    )
 
 # ============================================
-# ПЛАНИРОВЩИК
+# ЗАПУСК БОТА
 # ============================================
-scheduler = BackgroundScheduler()
 
-def schedule_morning():
-    logger.info("⏳ Запуск утреннего поста...")
-    text = generate_post()
-    if text:
-        bot.send_message(CHANNEL_ID, text)
-        logger.info("✅ Пост 10:00 отправлен")
-    else:
-        logger.error("❌ Пост 10:00 не отправлен")
+def run_bot():
+    logger.info("🤖 Запуск бота...")
+    try:
+        bot.remove_webhook()
+        bot.polling(none_stop=True, interval=0, timeout=20)
+    except Exception as e:
+        logger.error(f"❌ Ошибка бота: {e}")
+        time.sleep(5)
+        run_bot()
 
-def schedule_daily():
-    logger.info("⏳ Запуск ежедневного теста...")
-    post_daily_test()
-
-def schedule_evening():
-    logger.info("⏳ Запуск вечернего поста...")
-    text = generate_post()
-    if text:
-        bot.send_message(CHANNEL_ID, text)
-        logger.info("✅ Пост 17:00 отправлен")
-    else:
-        logger.error("❌ Пост 17:00 не отправлен")
-
-scheduler.add_job(schedule_morning, 'cron', hour=10, minute=0)
-scheduler.add_job(schedule_daily, 'cron', hour=13, minute=0)
-scheduler.add_job(schedule_evening, 'cron', hour=17, minute=0)
-scheduler.start()
-logger.info("✅ Планировщик запущен (10:00, 13:00, 17:00)")
-
-# ============================================
-# ЗАПУСК
-# ============================================
-if __name__ == '__main__':
-    logger.info("🚀 БОТ ЗАПУЩЕН")
-    logger.info("✅ Готов к работе!")
-    bot.polling(none_stop=True)
+if __name__ == "__main__":
+    run_bot()
