@@ -24,42 +24,22 @@ CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
 # ============================================
-# 5 БЕСПЛАТНЫХ API (АВТОМАТИЧЕСКОЕ ПЕРЕКЛЮЧЕНИЕ)
+# 5 НОВЫХ БЕСПЛАТНЫХ API (ОБНОВЛЕННЫЕ)
 # ============================================
 
 AI_PROXIES = [
-    {
-        "name": "G4F",
-        "url": "https://api.g4f.icu",
-        "model": "gpt-4o-mini"
-    },
-    {
-        "name": "Pawan",
-        "url": "https://api.pawan.krd",
-        "model": "gpt-3.5-turbo"
-    },
-    {
-        "name": "SHN",
-        "url": "https://chatgpt-api.shn.hk",
-        "model": "gpt-3.5-turbo"
-    },
-    {
-        "name": "REST",
-        "url": "https://rest.ai",
-        "model": "gpt-3.5-turbo"
-    },
-    {
-        "name": "DeepAI",
-        "url": "https://deepai.org",
-        "model": "gpt-3.5-turbo"
-    }
+    {"name": "GPT4Free", "url": "https://gpt4free.space", "model": "gpt-4o-mini"},
+    {"name": "Naga", "url": "https://api.naga.ac", "model": "gpt-3.5-turbo"},
+    {"name": "Venus", "url": "https://api.venus.ai", "model": "gpt-3.5-turbo"},
+    {"name": "Morpheus", "url": "https://api.morpheus.ai", "model": "gpt-3.5-turbo"},
+    {"name": "Flux", "url": "https://api.flux.ai", "model": "gpt-3.5-turbo"}
 ]
 
 # ============================================
 # ВЕРСИЯ
 # ============================================
 
-BOT_VERSION = "11.0.0"
+BOT_VERSION = "12.0.0"
 BOT_NAME = "Жизнь+ AI"
 
 DB_PATH = 'channel.db'
@@ -138,7 +118,6 @@ def ask_ai(system, user, max_tokens=4000, retries=2):
         {"role": "user", "content": user}
     ]
     
-    # ПЕРЕБИРАЕМ ВСЕ ПРОКСИ
     for proxy in AI_PROXIES:
         for attempt in range(retries):
             try:
@@ -156,19 +135,13 @@ def ask_ai(system, user, max_tokens=4000, retries=2):
                 response = requests.post(
                     f"{proxy['url']}/v1/chat/completions",
                     json=payload,
-                    timeout=90,
+                    timeout=30,
                     verify=False
                 )
                 
                 elapsed = time.time() - start_time
                 logger.info(f"⏱ Ответ за {elapsed:.2f} сек")
                 logger.info(f"📡 Статус: {response.status_code}")
-                
-                # Ждём 35 секунд (гарантия)
-                if elapsed < 35:
-                    wait_time = 35 - elapsed
-                    logger.info(f"⏳ ОЖИДАНИЕ {wait_time:.1f} СЕКУНД")
-                    time.sleep(wait_time)
                 
                 if response.status_code == 200:
                     result = response.json()
