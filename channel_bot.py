@@ -314,7 +314,6 @@ def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🚀 Старт', '🎯 Пройти тест')
     mk.add('❤️ О канале')
-    # Админ-панель показывается только если chat_id в ADMIN_IDS
     if chat_id in ADMIN_IDS:
         mk.add('👑 Админ-панель')
     return mk
