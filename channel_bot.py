@@ -25,17 +25,25 @@ BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
+# OpenRouter
 OPENROUTER_API_KEY = "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"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Agnes AI (БЕСПЛАТНО)
+AGNES_API_KEY = "" # СЮДА ВСТАВИШЬ КЛЮЧ ЗАВТРА
+AGNES_API_URL = "https://platform.agnes-ai.com/api/v1/images/generations"
+
+# Часовой пояс (Юрга UTC+5)
 TIMEZONE = ZoneInfo("Asia/Yekaterinburg")
 
-BOT_VERSION = "2.2.0"
-BOT_NAME = "Жизнь+ Про"
+# Версия
+BOT_VERSION = "3.0.0"
+BOT_NAME = "Жизнь+ Мега"
 
 DB_PATH = 'channel.db'
 LOG_PATH = 'bot_logs.txt'
 
+# 7 тем канала
 CHANNEL_THEMES = [
     "психология",
     "отношения",
@@ -47,7 +55,7 @@ CHANNEL_THEMES = [
 ]
 
 # ============================================================
-# ЛОГИРОВАНИЕ
+# МАКСИМАЛЬНОЕ ЛОГИРОВАНИЕ
 # ============================================================
 
 logging.basicConfig(
@@ -62,7 +70,7 @@ logger = logging.getLogger(__name__)
 logger.info(f"🚀 ЗАПУСК {BOT_NAME} v{BOT_VERSION}")
 
 # ============================================================
-# УБИЙЦА 409
+# УБИЙЦА 409 (30 СПОСОБОВ)
 # ============================================================
 
 def super_kill_409():
@@ -161,10 +169,64 @@ def ask_openrouter(system, user, max_tokens=8000, model=None, retries=3):
     return None
 
 # ============================================================
-# ГЕНЕРАЦИЯ КАРТИНОК
+# ГЕНЕРАЦИЯ КАРТИНОК (МЕГА-ВЕРСИЯ)
 # ============================================================
 
-def generate_image(prompt):
+def generate_image_agnes(prompt, width=1024, height=768, style="photorealistic"):
+    """Генерация мега-крутой картинки через Agnes AI"""
+    if not AGNES_API_KEY:
+        logger.error("❌ AGNES_API_KEY не установлен. Использую Pollinations.")
+        return generate_image_pollinations(prompt)
+    
+    try:
+        headers = {
+            "Authorization": f"Bearer {AGNES_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+            "style": style,
+            "model": "Agnes-Image-2.0-Flash",
+            "quality": "hd",
+            "num_images": 1
+        }
+        
+        logger.info("🖼 Генерация мега-картинки через Agnes AI...")
+        response = requests.post(
+            AGNES_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=90,
+            verify=False
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            image_url = data.get('data', [{}])[0].get('url', '')
+            
+            if image_url:
+                img_response = requests.get(image_url, timeout=60)
+                if img_response.status_code == 200:
+                    filename = f"/tmp/image_{int(time.time())}_{random.randint(1000,999999)}.jpg"
+                    with open(filename, 'wb') as f:
+                        f.write(img_response.content)
+                    logger.info(f"✅ Мега-картинка создана: {filename}")
+                    return filename
+                else:
+                    logger.warning("⚠️ Не удалось скачать картинку")
+        
+        logger.warning("⚠️ Agnes AI не ответил, использую Pollinations")
+        return generate_image_pollinations(prompt)
+        
+    except Exception as e:
+        logger.error(f"Ошибка Agnes AI: {e}")
+        return generate_image_pollinations(prompt)
+
+def generate_image_pollinations(prompt):
+    """Резервная генерация через Pollinations (старая версия)"""
     try:
         clean_prompt = prompt[:200].replace(' ', '%20').replace('"', '').replace("'", "")
         url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=1024&height=768&nologo=true&seed={random.randint(1,999999)}"
@@ -176,24 +238,32 @@ def generate_image(prompt):
             return filename
         return None
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"Ошибка Pollinations: {e}")
         return None
 
-def generate_post_image(theme):
+def generate_post_image(theme, super_quality=True):
+    """Генерация картинки для поста"""
     prompts = [
-        f"inspiring abstract art {theme}, warm colors, motivational, peaceful",
-        f"beautiful landscape {theme}, sunrise, hope, positive energy",
-        f"minimalist illustration {theme}, soft pastel, calm, self discovery"
+        f"inspiring abstract art {theme}, warm golden sunrise colors, motivational atmosphere, emotional depth, 4k resolution, award-winning photography style, spiritual growth",
+        f"beautiful landscape {theme}, serenity, hope, positive energy, meditation, ethereal lighting, cinematic composition",
+        f"minimalist illustration {theme}, soft pastel, inner peace, self discovery, healing, dreamy aesthetic, delicate textures"
     ]
-    return generate_image(random.choice(prompts))
+    prompt = random.choice(prompts)
+    if super_quality:
+        return generate_image_agnes(prompt)
+    return generate_image_pollinations(prompt)
 
-def generate_test_image(topic):
+def generate_test_image(topic, super_quality=True):
+    """Генерация картинки для теста"""
     prompts = [
-        f"psychological test illustration {topic}, brain, mind, introspection",
-        f"abstract psychology art {topic}, meditation, self reflection, calm",
-        f"mental health awareness {topic}, healing, balance, harmony"
+        f"minimalist psychological illustration {topic}, brain with glowing neural connections, introspection, deep blue and gold, surreal art, high detail, psychological depth, 4k",
+        f"abstract psychology art {topic}, meditation, self reflection, calm, serene, emotional intelligence, artistic masterpiece",
+        f"mindfulness illustration {topic}, inner peace, growth, positive energy, wisdom, spiritual awakening, intricate details"
     ]
-    return generate_image(random.choice(prompts))
+    prompt = random.choice(prompts)
+    if super_quality:
+        return generate_image_agnes(prompt)
+    return generate_image_pollinations(prompt)
 
 # ============================================================
 # БАЗА ДАННЫХ
@@ -471,10 +541,10 @@ def get_main_menu(chat_id):
 def admin_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('📝 Пост на тему', '🧠 Тест в канал')
-    mk.add('🎯 Сеанс коучинга', '🎁 Создать подарок')
-    mk.add('📊 Статистика', '⏰ Расписание')
-    mk.add('🎫 Создать промокод', '📋 Логи')
-    mk.add('👑 Главное меню')
+    mk.add('🖼 Картинка в канал', '🎯 Сеанс коучинга')
+    mk.add('🎁 Создать подарок', '📊 Статистика')
+    mk.add('⏰ Расписание', '🎫 Создать промокод')
+    mk.add('📋 Логи', '👑 Главное меню')
     return mk
 
 def test_type_menu():
@@ -713,6 +783,71 @@ def test_to_channel_start(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
+# -------------------- КАРТИНКИ В КАНАЛ --------------------
+
+@bot.message_handler(func=lambda m: m.text == '🖼 Картинка в канал')
+def image_to_channel(message):
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+        mk.add(telebot.types.InlineKeyboardButton("🖼 Отправить картинку", callback_data="send_image_only"))
+        mk.add(telebot.types.InlineKeyboardButton("📝 Пост с картинкой", callback_data="send_post_with_image"))
+        mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_image"))
+        bot.send_message(message.chat.id, "🖼 Что делаем с картинкой?", reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+@bot.callback_query_handler(func=lambda c: c.data == 'send_image_only')
+def send_image_only(c):
+    try:
+        chat_id = c.message.chat.id
+        bot.edit_message_text("📝 Введи описание для картинки (тему или любой текст):", chat_id, c.message.message_id)
+        bot.register_next_step_handler(c.message, process_image_only)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+    c.answer()
+
+def process_image_only(message):
+    try:
+        chat_id = message.chat.id
+        prompt = message.text
+        bot.send_message(chat_id, "🖼 Генерация картинки...\n⏱ Ожидание до 60 сек")
+        image_path = generate_image_agnes(prompt)
+        if image_path:
+            with open(image_path, 'rb') as photo:
+                bot.send_photo(CHANNEL_ID, photo, caption=f"🖼 {prompt}")
+            os.remove(image_path)
+            c.execute("UPDATE stats SET images_generated = images_generated + 1")
+            conn.commit()
+            bot.send_message(chat_id, "✅ Картинка отправлена в канал!", reply_markup=admin_menu())
+        else:
+            bot.send_message(chat_id, "❌ Не удалось создать картинку.", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+@bot.callback_query_handler(func=lambda c: c.data == 'send_post_with_image')
+def send_post_with_image(c):
+    try:
+        chat_id = c.message.chat.id
+        bot.edit_message_text("📝 Выбери тему для поста с картинкой:", chat_id, c.message.message_id)
+        mk = theme_menu()
+        bot.send_message(chat_id, "Выбери тему:", reply_markup=mk)
+        sessions[chat_id] = {"action": "post_with_image"}
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+    c.answer()
+
+@bot.callback_query_handler(func=lambda c: c.data == 'cancel_image')
+def cancel_image(c):
+    try:
+        chat_id = c.message.chat.id
+        bot.delete_message(chat_id, c.message.message_id)
+        bot.send_message(chat_id, "❌ Отменено", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+    c.answer()
+
 # -------------------- ОБЩИЙ ОБРАБОТЧИК ДЛЯ ВЫБОРА ТЕМЫ --------------------
 
 @bot.message_handler(func=lambda m: m.text in [t.title() for t in CHANNEL_THEMES] and m.chat.id in ADMIN_IDS)
@@ -784,8 +919,43 @@ def handle_theme_selection(message):
             bot.send_message(chat_id, "✅ Пост отправлен в канал!", reply_markup=admin_menu())
             sessions[chat_id] = {}
             
+        elif action == "post_with_image":
+            # === ПОСТ С КАРТИНКОЙ ===
+            bot.send_message(chat_id, f"⏳ Генерация поста и картинки на тему '{theme}'...")
+            post = generate_post(theme)
+            if not post:
+                bot.send_message(chat_id, "❌ OpenRouter не ответил.", reply_markup=admin_menu())
+                sessions[chat_id] = {}
+                return
+            
+            bot.send_message(chat_id, "🖼 Генерация картинки...")
+            image_path = generate_post_image(theme)
+            
+            try:
+                c.execute("INSERT INTO posts_history (content, topic, image_path) VALUES (?, ?, ?)", (post, theme, image_path if image_path else ""))
+                conn.commit()
+                c.execute("UPDATE stats SET posts_count = posts_count + 1")
+                if image_path:
+                    c.execute("UPDATE stats SET images_generated = images_generated + 1")
+                conn.commit()
+            except:
+                pass
+            
+            try:
+                if image_path:
+                    with open(image_path, 'rb') as photo:
+                        bot.send_photo(CHANNEL_ID, photo, caption=post)
+                    os.remove(image_path)
+                else:
+                    bot.send_message(CHANNEL_ID, post)
+                bot.send_message(chat_id, "✅ Пост с картинкой отправлен в канал!", reply_markup=admin_menu())
+            except Exception as e:
+                bot.send_message(chat_id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
+            
+            sessions[chat_id] = {}
+            
         else:
-            bot.send_message(chat_id, "❌ Сначала выбери действие: '📝 Пост на тему' или '🧠 Тест в канал'", reply_markup=admin_menu())
+            bot.send_message(chat_id, "❌ Сначала выбери действие: '📝 Пост на тему', '🧠 Тест в канал' или '🖼 Картинка в канал'", reply_markup=admin_menu())
             
     except Exception as e:
         logger.error(f"Ошибка: {e}")
