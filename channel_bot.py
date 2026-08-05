@@ -16,55 +16,30 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ============================================
-# НАСТРОЙКИ - ВСЕ ДАННЫЕ УЖЕ ВСТАВЛЕНЫ
-# ============================================
-
 BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
-
-if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN не установлен!")
-
-# ВАШ TELEGRAM ID
 ADMIN_IDS = [8746212340]
-
-# ============================================
-# НАСТРОЙКА ЛОГИРОВАНИЯ
-# ============================================
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# ============================================
-# УДАЛЯЕМ ВЕБХУК (решает проблему 409)
-# ============================================
 
 def kill_409():
     try:
         for f in glob.glob('update-offset-*.json'):
             try:
                 os.remove(f)
-                logger.info(f"🧹 Удалён offset: {f}")
             except:
                 pass
-        
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        response = requests.post(url, json={"drop_pending_updates": True})
-        logger.info(f"🧹 Удаление вебхука: {response.text}")
+        requests.post(url, json={"drop_pending_updates": True})
         return True
-    except Exception as e:
-        logger.error(f"❌ Ошибка очистки: {e}")
+    except:
         return False
 
 kill_409()
 time.sleep(2)
-
-# ============================================
-# GIGACHAT
-# ============================================
 
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -82,8 +57,6 @@ def get_giga_token():
             'Content-Type': 'application/x-www-form-urlencoded'
         }
         
-        logger.info("🔄 Получение токена GigaChat...")
-        
         response = requests.post(
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
@@ -92,32 +65,28 @@ def get_giga_token():
             verify=False
         )
         
-        logger.info(f"📡 Статус ответа: {response.status_code}")
-        
         if response.status_code != 200:
-            logger.error(f"❌ Ошибка токена: {response.status_code} - {response.text}")
+            logger.error(f"Ошибка токена: {response.status_code}")
             return None
         
         data = response.json()
         token = data.get('access_token')
         
         if not token:
-            logger.error(f"❌ Токен не найден в ответе: {data}")
             return None
         
         giga_token_cache["token"] = token
         giga_token_cache["expires"] = time.time() + 3500
-        logger.info("✅ Токен GigaChat получен успешно")
+        logger.info("✅ Токен получен")
         return token
         
     except Exception as e:
-        logger.error(f"❌ Ошибка получения токена: {e}")
+        logger.error(f"Ошибка токена: {e}")
         return None
 
 def ask_giga(system, user, max_tokens=2500):
     token = get_giga_token()
     if not token:
-        logger.error("❌ Токен не получен")
         return None
     
     headers = {
@@ -137,7 +106,6 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
-        logger.info("📤 Отправляю запрос в GigaChat...")
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -146,24 +114,16 @@ def ask_giga(system, user, max_tokens=2500):
             verify=False
         )
         
-        logger.info(f"📡 Статус ответа: {response.status_code}")
-        
         if response.status_code != 200:
-            logger.error(f"❌ Ошибка GigaChat: {response.status_code} - {response.text[:500]}")
+            logger.error(f"Ошибка GigaChat: {response.status_code}")
             return None
         
         result = response.json()
-        content = result['choices'][0]['message']['content']
-        logger.info("✅ Ответ GigaChat получен")
-        return content
+        return result['choices'][0]['message']['content']
         
     except Exception as e:
-        logger.error(f"❌ Ошибка GigaChat: {e}")
+        logger.error(f"Ошибка GigaChat: {e}")
         return None
-
-# ============================================
-# БАЗА ДАННЫХ
-# ============================================
 
 DB_PATH = 'channel.db'
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -210,10 +170,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS posts_history
 
 conn.commit()
 
-# ============================================
-# ГЕНЕРАТОРЫ
-# ============================================
-
 TEST_TOPICS = {
     "психология": "🧠 Психология",
     "отношения": "💕 Отношения",
@@ -224,10 +180,10 @@ TEST_TOPICS = {
 }
 
 def generate_test_questions(topic, count=10):
-    system = """Ты — профессиональный психолог с 25-летним стажем.
-    Вопросы должны быть глубокими, небанальными, без штампов."""
+    system = """Ты — профессиональный психолог. Составь вопросы для теста.
+    Верни ТОЛЬКО JSON массив, без дополнительного текста."""
     
-    user = f"""Составь {count} глубоких вопросов на тему "{topic}" в формате JSON:
+    user = f"""Составь {count} вопросов на тему "{topic}" в формате JSON:
     [
         {{
             "question": "текст вопроса?",
@@ -236,18 +192,12 @@ def generate_test_questions(topic, count=10):
                 "B": "вариант 2",
                 "C": "вариант 3",
                 "D": "вариант 4"
-            }},
-            "scores": {{
-                "A": 0,
-                "B": 1,
-                "C": 2,
-                "D": 3
             }}
         }}
     ]
     Верни ТОЛЬКО JSON."""
     
-    response = ask_giga(system, user, max_tokens=3000)
+    response = ask_giga(system, user, 3000)
     if not response:
         return None
     
@@ -257,74 +207,44 @@ def generate_test_questions(topic, count=10):
         if start == -1 or end == -1:
             return None
         
-        data = json.loads(response[start:end])
-        if isinstance(data, dict) and 'questions' in data:
-            data = data['questions']
-        
-        parsed = []
-        for q in data:
-            if 'question' in q and 'options' in q:
-                if 'scores' not in q:
-                    q['scores'] = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
-                parsed.append(q)
-        
-        return parsed[:count] if parsed else None
-    except Exception as e:
-        logger.error(f"Ошибка парсинга: {e}")
+        questions = json.loads(response[start:end])
+        return questions[:count]
+    except:
         return None
 
 def generate_analysis(topic, answers, score, total, is_paid):
     if is_paid:
-        system = """Ты — команда: клинический психолог и коуч мирового уровня.
-        Психолог даёт 2 инсайта. Коуч даёт 3 конкретных шага на сегодня.
-        ВСЁ НА РУССКОМ. Объём: 1400+ знаков."""
+        system = """Ты — психолог и коуч. Дай полный разбор личности.
+        Включи: портрет, инсайты, рекомендации, книги, упражнения."""
         
         user = f"""Тема: {topic}
 Ответы: {answers}
 Баллы: {score} из {total}
-Проведи полный разбор личности. Включи: портрет, 2 инсайта, шаги на неделю, книги, упражнения, видео."""
+Сделай полный анализ."""
     else:
-        system = """Ты — клинический психолог с 25-летним стажем.
-        Говори коротко, но ёмко. Используй НЛП-язык.
-        Без воды, без шаблонов.
-        Объём: 700+ знаков. БЕЗ книг и упражнений."""
-        
+        system = """Ты — психолог. Дай честный анализ без пафоса."""
         user = f"""Тема: {topic}
 Ответы: {answers}
 Баллы: {score} из {total}
-Проведи глубокий разбор личности. Дай 2 инсайта и 2 вопроса для размышления."""
+Сделай краткий анализ."""
     
-    return ask_giga(system, user, max_tokens=3000 if is_paid else 2000)
+    return ask_giga(system, user, 3000 if is_paid else 2000)
 
 def generate_post():
-    themes = [
-        "утренняя энергия", "внутренняя сила", "радость в простых вещах",
-        "преодоление страхов", "любовь к себе", "благодарность",
-        "мотивация", "осознанность", "отношения", "финансовое мышление"
-    ]
+    themes = ["психология", "отношения", "саморазвитие", "мотивация", "деньги"]
     theme = random.choice(themes)
     
-    system = """Ты — психолог, который пишет посты, от которых хочется действовать.
-    Используй НЛП-язык. Без слащавости. Каждый пост уникальный."""
+    system = """Ты — автор канала о психологии. Пиши честно, без пафоса.
+    Используй живой язык, как в разговоре с другом."""
     
     user = f"""Напиши пост на тему "{theme}" для Telegram.
-    Длина: 800–1000 знаков. Заголовок с эмодзи. Практический совет.
-    Мотивирующая фраза. Хештеги."""
+    Длина: 500-800 знаков.
+    Добавь практический совет.
+    Закончи вопросом к читателю."""
     
-    response = ask_giga(system, user, max_tokens=2000)
-    if not response or len(response) < 700:
-        return None
-    return response
-
-# ============================================
-# TELEGRAM БОТ
-# ============================================
+    return ask_giga(system, user, 2000)
 
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# ============================================
-# ВЕБ-СЕРВЕР ДЛЯ RENDER
-# ============================================
 
 app = Flask(__name__)
 
@@ -334,17 +254,13 @@ def home():
 
 @app.route('/health')
 def health():
-    return {"status": "ok", "time": datetime.now().isoformat()}
+    return {"status": "ok"}
 
 def run_flask():
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
 
 threading.Thread(target=run_flask, daemon=True).start()
-
-# ============================================
-# МЕНЮ
-# ============================================
 
 def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -367,10 +283,6 @@ def test_type_menu():
     mk.add('💎 Платный (20 вопросов)')
     mk.add('🔙 Назад')
     return mk
-
-# ============================================
-# ОБРАБОТЧИКИ
-# ============================================
 
 sessions = {}
 
@@ -442,7 +354,7 @@ def topic_callback(c):
         
         questions = generate_test_questions(topic, int(count))
         if not questions:
-            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест. Попробуйте позже.")
+            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест.")
             return
         
         sessions[c.message.chat.id] = {
@@ -456,7 +368,6 @@ def topic_callback(c):
         bot.delete_message(c.message.chat.id, c.message.message_id)
         send_question(c.message.chat.id)
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
         bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
 
 @bot.callback_query_handler(func=lambda c: c.data == 'cancel')
@@ -530,16 +441,10 @@ def finish_test(chat_id):
         chat_id,
         f"📊 Тест завершен!\n\n"
         f"✅ Результат: {score} из {total}\n"
-        f"⏳ GigaChat генерирует анализ...\nДо 40 секунд."
+        f"⏳ GigaChat генерирует анализ..."
     )
     
-    analysis = None
-    for attempt in range(3):
-        analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
-        if analysis:
-            break
-        time.sleep(2)
-        bot.send_message(chat_id, f"🔄 Попытка {attempt + 2}/3...")
+    analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
     
     if analysis:
         bot.send_message(
@@ -550,16 +455,11 @@ def finish_test(chat_id):
     else:
         bot.send_message(
             chat_id,
-            f"❌ GigaChat временно не отвечает.\n\n"
-            f"✅ Ваш результат сохранён.",
+            f"❌ Не удалось сгенерировать анализ.",
             reply_markup=get_main_menu(chat_id)
         )
     
     del sessions[chat_id]
-
-# ============================================
-# АДМИН-ФУНКЦИИ
-# ============================================
 
 @bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
 def admin_panel(message):
@@ -714,10 +614,6 @@ def process_promo(message):
         "🎉 Промокод активирован!\n\nТеперь вы можете пройти 💎 Платный тест бесплатно!",
         reply_markup=get_main_menu(chat_id)
     )
-
-# ============================================
-# ЗАПУСК БОТА
-# ============================================
 
 def run_bot():
     logger.info("🤖 Запуск бота...")
