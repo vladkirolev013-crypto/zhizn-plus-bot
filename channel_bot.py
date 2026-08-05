@@ -25,21 +25,97 @@ ADMIN_IDS = [8746212340]
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def kill_409():
+# ============================================
+# УБИЙЦА 409 - МАКСИМАЛЬНАЯ ЖЕСТКОСТЬ
+# ============================================
+
+def kill_409_forever():
+    """Уничтожает все следы вебхука"""
     try:
-        for f in glob.glob('update-offset-*.json'):
-            try:
-                os.remove(f)
-            except:
-                pass
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        requests.post(url, json={"drop_pending_updates": True})
+        # 1. Удаляем вебхук 3 раза для надежности
+        for i in range(3):
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+            requests.post(url, json={"drop_pending_updates": True})
+            time.sleep(1)
+        
+        # 2. Сбрасываем вебхук в ноль
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        requests.post(url, json={"url": "", "drop_pending_updates": True})
+        
+        # 3. Удаляем все возможные файлы
+        for pattern in ['update-offset-*.json', '*.lock', '*.session', '*.state']:
+            for f in glob.glob(pattern):
+                try:
+                    os.remove(f)
+                except:
+                    pass
+        
+        # 4. Проверяем статус
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+        response = requests.get(url)
+        logger.info(f"Статус вебхука: {response.json()}")
+        
         return True
-    except:
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
         return False
 
-kill_409()
-time.sleep(2)
+# ВЫПОЛНЯЕМ УБИЙСТВО
+kill_409_forever()
+time.sleep(5)
+
+# ============================================
+# БАЗА ДАННЫХ
+# ============================================
+
+DB_PATH = 'channel.db'
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+c = conn.cursor()
+
+c.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+              topic TEXT, 
+              questions TEXT, 
+              created_at TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS stats 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+              free_count INTEGER DEFAULT 0, 
+              paid_count INTEGER DEFAULT 0,
+              promo_used INTEGER DEFAULT 0)''')
+
+c.execute("SELECT COUNT(*) FROM stats")
+if c.fetchone()[0] == 0:
+    c.execute("INSERT INTO stats (free_count, paid_count, promo_used) VALUES (0, 0, 0)")
+
+c.execute('''CREATE TABLE IF NOT EXISTS user_sessions 
+             (chat_id INTEGER PRIMARY KEY, 
+              topic TEXT, 
+              questions TEXT, 
+              current_q INTEGER, 
+              answers TEXT, 
+              scores TEXT, 
+              is_paid INTEGER, 
+              result TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS promocodes 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              code TEXT UNIQUE,
+              created_by INTEGER,
+              created_at TEXT,
+              used_by INTEGER DEFAULT 0,
+              used_at TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS posts_history
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              content TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+conn.commit()
+
+# ============================================
+# GIGACHAT
+# ============================================
 
 giga_token_cache = {"token": None, "expires": 0}
 
@@ -125,50 +201,9 @@ def ask_giga(system, user, max_tokens=2500):
         logger.error(f"Ошибка GigaChat: {e}")
         return None
 
-DB_PATH = 'channel.db'
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-c = conn.cursor()
-
-c.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              topic TEXT, 
-              questions TEXT, 
-              created_at TEXT)''')
-
-c.execute('''CREATE TABLE IF NOT EXISTS stats 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-              free_count INTEGER DEFAULT 0, 
-              paid_count INTEGER DEFAULT 0,
-              promo_used INTEGER DEFAULT 0)''')
-
-c.execute("SELECT COUNT(*) FROM stats")
-if c.fetchone()[0] == 0:
-    c.execute("INSERT INTO stats (free_count, paid_count, promo_used) VALUES (0, 0, 0)")
-
-c.execute('''CREATE TABLE IF NOT EXISTS user_sessions 
-             (chat_id INTEGER PRIMARY KEY, 
-              topic TEXT, 
-              questions TEXT, 
-              current_q INTEGER, 
-              answers TEXT, 
-              scores TEXT, 
-              is_paid INTEGER, 
-              result TEXT)''')
-
-c.execute('''CREATE TABLE IF NOT EXISTS promocodes 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-              code TEXT UNIQUE,
-              created_by INTEGER,
-              created_at TEXT,
-              used_by INTEGER DEFAULT 0,
-              used_at TEXT)''')
-
-c.execute('''CREATE TABLE IF NOT EXISTS posts_history
-             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-              content TEXT,
-              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-
-conn.commit()
+# ============================================
+# ГЕНЕРАТОРЫ
+# ============================================
 
 TEST_TOPICS = {
     "психология": "🧠 Психология",
@@ -244,7 +279,15 @@ def generate_post():
     
     return ask_giga(system, user, 2000)
 
+# ============================================
+# TELEGRAM БОТ
+# ============================================
+
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# ============================================
+# ВЕБ-СЕРВЕР ДЛЯ RENDER
+# ============================================
 
 app = Flask(__name__)
 
@@ -261,6 +304,10 @@ def run_flask():
     app.run(host='0.0.0.0', port=port, debug=False)
 
 threading.Thread(target=run_flask, daemon=True).start()
+
+# ============================================
+# МЕНЮ
+# ============================================
 
 def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -615,15 +662,33 @@ def process_promo(message):
         reply_markup=get_main_menu(chat_id)
     )
 
+# ============================================
+# ЗАПУСК БОТА - ОСОБЫЙ РЕЖИМ
+# ============================================
+
 def run_bot():
     logger.info("🤖 Запуск бота...")
     try:
+        # ЕЩЕ РАЗ убиваем вебхук перед запуском
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        requests.post(url, json={"drop_pending_updates": True})
+        
+        # Запускаем с особыми параметрами
         bot.remove_webhook()
-        bot.polling(none_stop=True, interval=0, timeout=20)
+        bot.polling(
+            none_stop=True,
+            interval=0,
+            timeout=20,
+            long_polling_timeout=20,
+            allowed_updates=['message', 'callback_query']
+        )
     except Exception as e:
         logger.error(f"❌ Ошибка бота: {e}")
         time.sleep(5)
         run_bot()
 
 if __name__ == "__main__":
+    # ЕЩЕ ОДИН РАЗ убиваем
+    kill_409_forever()
+    time.sleep(3)
     run_bot()
