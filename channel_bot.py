@@ -25,13 +25,10 @@ BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
-OPENROUTER_API_KEY = "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"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-
 TIMEZONE = ZoneInfo("Asia/Yekaterinburg")
 
-BOT_VERSION = "5.1.0"
-BOT_NAME = "Жизнь+ Про"
+BOT_VERSION = "5.2.0"
+BOT_NAME = "Жизнь+ Про (AI Switch)"
 
 DB_PATH = 'channel.db'
 LOG_PATH = 'bot_logs.txt'
@@ -47,7 +44,38 @@ CHANNEL_THEMES = [
 ]
 
 # ============================================================
-# МАКСИМАЛЬНОЕ ЛОГИРОВАНИЕ
+# СПИСОК AI-ПРОВАЙДЕРОВ (АВТОПЕРЕКЛЮЧЕНИЕ)
+# ============================================================
+
+AI_PROVIDERS = [
+    {
+        "name": "OpenRouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "openrouter/free",
+        "api_key": "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"
+    },
+    {
+        "name": "G4F (Backup)",
+        "url": "https://api.g4f.icu/v1/chat/completions",
+        "model": "gpt-4o-mini",
+        "api_key": ""
+    },
+    {
+        "name": "Pawan (Backup)",
+        "url": "https://api.pawan.krd/v1/chat/completions",
+        "model": "gpt-3.5-turbo",
+        "api_key": ""
+    },
+    {
+        "name": "SHN (Backup)",
+        "url": "https://chatgpt-api.shn.hk/v1/chat/completions",
+        "model": "gpt-3.5-turbo",
+        "api_key": ""
+    }
+]
+
+# ============================================================
+# ЛОГИРОВАНИЕ
 # ============================================================
 
 logging.basicConfig(
@@ -97,65 +125,75 @@ for i in range(3):
     time.sleep(2)
 
 # ============================================================
-# БЫСТРЫЙ OPENROUTER (30 СЕКУНД)
+# УНИВЕРСАЛЬНЫЙ ЗАПРОС К AI (С ПЕРЕКЛЮЧЕНИЕМ)
 # ============================================================
 
-def ask_openrouter(system, user, max_tokens=3000, retries=2):
-    """Быстрый запрос к OpenRouter (таймаут 30 сек)"""
+def ask_ai(system, user, max_tokens=3000, retries=2):
+    """Запрос к AI с автоматическим переключением между провайдерами"""
     
     if not user or len(user.strip()) == 0:
         user = "Сделай запрос."
-    
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://t.me/zhizn_plus",
-        "X-Title": "Zhizn+ Bot"
-    }
     
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user}
     ]
     
-    payload = {
-        "model": "deepseek/deepseek-v4-flash:free",
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": 0.85,
-        "stream": False
-    }
+    for provider in AI_PROVIDERS:
+        for attempt in range(retries):
+            try:
+                logger.info(f"🔄 Провайдер: {provider['name']}, попытка {attempt+1}/{retries}")
+                
+                headers = {
+                    "Content-Type": "application/json"
+                }
+                if provider.get("api_key"):
+                    headers["Authorization"] = f"Bearer {provider['api_key']}"
+                
+                payload = {
+                    "model": provider["model"],
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.85,
+                    "stream": False
+                }
+                
+                start = time.time()
+                response = requests.post(
+                    provider["url"],
+                    headers=headers,
+                    json=payload,
+                    timeout=30,
+                    verify=False
+                )
+                elapsed = time.time() - start
+                logger.info(f"⏱ Ответ за {elapsed:.2f} сек")
+                logger.info(f"📡 Статус: {response.status_code}")
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    if content and len(content) > 10:
+                        logger.info(f"✅ ОТВЕТ ОТ {provider['name']} ({len(content)} символов)")
+                        return content
+                    else:
+                        logger.warning(f"⚠️ Пустой ответ от {provider['name']}")
+                else:
+                    logger.warning(f"⚠️ Ошибка {provider['name']}: {response.status_code}")
+                
+                time.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка {provider['name']}: {e}")
+                time.sleep(0.5)
+        
+        logger.info(f"⏳ {provider['name']} не ответил, переключаюсь...")
     
-    for attempt in range(retries):
-        try:
-            logger.info(f"🔄 Попытка {attempt+1}/{retries}")
-            start = time.time()
-            response = requests.post(
-                OPENROUTER_URL,
-                headers=headers,
-                json=payload,
-                timeout=30,
-                verify=False
-            )
-            elapsed = time.time() - start
-            logger.info(f"⏱ Ответ за {elapsed:.2f} сек")
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-                if content and len(content) > 10:
-                    return content
-            else:
-                logger.warning(f"⚠️ Ошибка: {response.status_code}")
-            time.sleep(0.5)
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка: {e}")
-            time.sleep(0.5)
-    
+    # Если все провайдеры упали
+    logger.error("❌ ВСЕ AI-ПРОВАЙДЕРЫ НЕ ОТВЕТИЛИ")
     return None
 
 # ============================================================
-# ГЕНЕРАЦИЯ КАРТИНОК (БЫСТРАЯ)
+# ГЕНЕРАЦИЯ КАРТИНОК
 # ============================================================
 
 def generate_image(prompt):
@@ -293,13 +331,13 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
 
 # ============================================================
-# ГЕНЕРАТОРЫ КОНТЕНТА (С АИ)
+# ГЕНЕРАТОРЫ КОНТЕНТА
 # ============================================================
 
 def generate_post(topic):
     system = f"Ты — автор канала о психологии. Напиши пост на тему '{topic}'. Минимум 600 символов. Без пафоса. Добавь вопрос в конце."
     user = f"Тема: {topic}."
-    return ask_openrouter(system, user, 3000)
+    return ask_ai(system, user, 3000)
 
 def generate_test_questions(topic, count=10):
     if count == 10:
@@ -321,7 +359,7 @@ def generate_test_questions(topic, count=10):
     
     НЕ ДОБАВЛЯЙ НИЧЕГО КРОМЕ JSON."""
     
-    response = ask_openrouter(system, "", 4000)
+    response = ask_ai(system, "", 4000)
     if not response:
         return None
     
@@ -354,7 +392,7 @@ def generate_analysis(topic, answers, score, total, is_paid):
         Объем: 800+ знаков."""
         user = f"Тема: {topic}\nОтветы: {answers}\nБаллы: {score} из {total}"
     
-    return ask_openrouter(system, user, 4000 if is_paid else 2000)
+    return ask_ai(system, user, 4000 if is_paid else 2000)
 
 def generate_consultation_questions():
     system = """ТЫ — КЛИНИЧЕСКИЙ ПСИХОЛОГ.
@@ -363,7 +401,7 @@ def generate_consultation_questions():
     Формат: [{"question": "текст вопроса?"}]
     НЕ ДОБАВЛЯЙ НИЧЕГО КРОМЕ JSON."""
     
-    response = ask_openrouter(system, "", 4000)
+    response = ask_ai(system, "", 4000)
     if not response:
         return None
     start = response.find('[')
@@ -383,7 +421,7 @@ def generate_consultation_analysis(answers, chat_id, session_id):
     Объем: 1500+ знаков."""
     
     user = f"Ответы:\n{answers}"
-    response = ask_openrouter(system, user, 4000)
+    response = ask_ai(system, user, 4000)
     if response:
         try:
             c.execute("""INSERT INTO consultation_history (chat_id, session_id, questions, answers, analysis) VALUES (?, ?, ?, ?, ?)""",
@@ -397,7 +435,7 @@ def generate_consultation_analysis(answers, chat_id, session_id):
     return None
 
 # ============================================================
-# ПЛАНИРОВЩИК (ФОНОВЫЙ)
+# ПЛАНИРОВЩИК
 # ============================================================
 
 def get_schedule():
@@ -545,9 +583,42 @@ def start_button(message):
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
     try:
+        text = """🧠 **ЖИЗНЬ+** — канал о том, что внутри.
+
+Мы не даём ответов. Мы даём вопросы, которые меняют.
+
+Здесь ты не найдёшь:
+— мотивационных лозунгов
+— «ты уникален, просто поверь»
+— воды и пустых советов
+
+Здесь ты найдёшь:
+— честные мысли без прикрас
+— посты, которые застревают в голове
+— тесты, которые вскрывают то, что ты прятал
+— сеансы, которые работают глубже, чем ты готов
+
+Автор — не психолог, не коуч.
+Он — человек, который прошёл через своё дерьмо и решил:
+«Хватит врать себе».
+
+Он говорит с тобой как с равным.
+Без ролей. Без масок. Без «я тебя научу».
+
+Это канал для тех, кто устал от пустоты.
+Для тех, кто готов смотреть в себя.
+Для тех, кто хочет не казаться, а быть.
+
+Подписывайся.
+Испытай на прочность свою честность.
+
+@zhizn_plus
+
+#жизньплюс #осознанность #безпафоса"""
+        
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton("📢 Перейти в канал", url="https://t.me/zhizn_plus"))
-        bot.send_message(message.chat.id, "💫 ЖИЗНЬ+", reply_markup=mk)
+        bot.send_message(message.chat.id, text, reply_markup=mk, parse_mode='Markdown')
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
@@ -590,7 +661,7 @@ def topic_callback(c):
         bot.edit_message_text("⏳ Генерация теста...\n⏱ Ожидание до 30 сек", chat_id, c.message.message_id)
         questions = generate_test_questions(topic, count)
         if not questions:
-            bot.send_message(chat_id, "❌ OpenRouter не ответил. Попробуй позже.")
+            bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.")
             return
         sessions[chat_id] = {
             'topic': topic,
@@ -682,7 +753,7 @@ def finish_test(chat_id):
         if analysis:
             bot.send_message(chat_id, f"🔍 АНАЛИЗ\n\n{analysis}", reply_markup=get_main_menu(chat_id))
         else:
-            bot.send_message(chat_id, "❌ OpenRouter не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
+            bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
         if chat_id in sessions:
             del sessions[chat_id]
     except Exception as e:
@@ -866,7 +937,7 @@ def handle_theme_selection(message):
             bot.send_message(chat_id, f"⏳ Генерация теста на тему '{theme}'...\n⏱ Ожидание до 30 сек")
             questions = generate_test_questions(theme, 10)
             if not questions:
-                bot.send_message(chat_id, "❌ OpenRouter не ответил.", reply_markup=admin_menu())
+                bot.send_message(chat_id, "❌ AI не ответил.", reply_markup=admin_menu())
                 sessions[chat_id] = {}
                 return
             
@@ -907,7 +978,7 @@ def handle_theme_selection(message):
             bot.send_message(chat_id, f"⏳ Генерация поста на тему '{theme}'...\n⏱ Ожидание до 30 сек")
             post = generate_post(theme)
             if not post:
-                bot.send_message(chat_id, "❌ OpenRouter не ответил.", reply_markup=admin_menu())
+                bot.send_message(chat_id, "❌ AI не ответил.", reply_markup=admin_menu())
                 sessions[chat_id] = {}
                 return
             
