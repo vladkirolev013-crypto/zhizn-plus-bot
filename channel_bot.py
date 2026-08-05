@@ -11,8 +11,10 @@ import base64
 import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from flask import Flask
 import urllib3
+import pytz
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -306,12 +308,13 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ============================================
-# МЕНЮ
+# МЕНЮ (АДМИН-ПАНЕЛЬ ВИДНА ТОЛЬКО ТЕБЕ)
 # ============================================
 def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🚀 Старт', '🎯 Пройти тест')
     mk.add('❤️ О канале')
+    # Админ-панель показывается только если chat_id в ADMIN_IDS
     if chat_id in ADMIN_IDS:
         mk.add('👑 Админ-панель')
     return mk
@@ -340,6 +343,8 @@ sessions = {}
 # ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
+    chat_id = message.chat.id
+    
     if ' ' in message.text:
         param = message.text.split(' ', 1)[1]
         if param.startswith('daily_'):
@@ -349,7 +354,7 @@ def start(message):
                 row = c.fetchone()
                 if row:
                     questions = json.loads(row[0])
-                    sessions[message.chat.id] = {
+                    sessions[chat_id] = {
                         'topic': topic,
                         'questions': questions,
                         'answers': [],
@@ -357,14 +362,14 @@ def start(message):
                         'scores': [],
                         'is_paid': False
                     }
-                    bot.send_message(message.chat.id, f"📌 Ежедневный тест: {topic}")
-                    send_question(message.chat.id)
+                    bot.send_message(chat_id, f"📌 Ежедневный тест: {topic}")
+                    send_question(chat_id)
                     return
             except:
                 pass
     
     welcome = "🌟 Добро пожаловать в бота Жизнь+!\n\nНажми «🎯 Пройти тест» или «❤️ О канале»."
-    bot.send_message(message.chat.id, welcome, reply_markup=get_main_menu(message.chat.id))
+    bot.send_message(chat_id, welcome, reply_markup=get_main_menu(chat_id))
 
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
 def start_button(message):
@@ -414,11 +419,12 @@ def free_test(message):
 
 @bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов)')
 def paid_test(message):
-    if message.chat.id in ADMIN_IDS:
+    chat_id = message.chat.id
+    if chat_id in ADMIN_IDS:
         show_topics(message, 'paid', 20)
     else:
         bot.send_message(
-            message.chat.id,
+            chat_id,
             "💎 Платный тест — 50 ₽\n\nА пока пройдите бесплатный.",
             reply_markup=test_type_menu()
         )
@@ -614,12 +620,12 @@ def admin_test_topic_callback(c):
             bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест.")
             return
         
-        conn.execute(
+        c.execute(
             "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
             (topic, json.dumps(questions), datetime.now().isoformat())
         )
         conn.commit()
-        test_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        test_id = c.lastrowid
         
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton(
@@ -725,27 +731,37 @@ def cmd_post(message):
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
-# ПЛАНИРОВЩИК
+# ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА)
 # ============================================
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(timezone='Asia/Novokuznetsk')
 
 def schedule_morning():
+    logger.info("⏳ Запуск утреннего поста 10:00...")
     text = generate_post()
     if text:
         bot.send_message(CHANNEL_ID, text)
+        logger.info("✅ Пост 10:00 отправлен")
+    else:
+        logger.error("❌ Пост 10:00 не отправлен")
 
 def schedule_daily():
+    logger.info("⏳ Запуск ежедневного теста 13:00...")
     post_daily_test()
 
 def schedule_evening():
+    logger.info("⏳ Запуск вечернего поста 17:00...")
     text = generate_post()
     if text:
         bot.send_message(CHANNEL_ID, text)
+        logger.info("✅ Пост 17:00 отправлен")
+    else:
+        logger.error("❌ Пост 17:00 не отправлен")
 
-scheduler.add_job(schedule_morning, 'cron', hour=8, minute=0)
-scheduler.add_job(schedule_daily, 'cron', hour=10, minute=0)
-scheduler.add_job(schedule_evening, 'cron', hour=19, minute=0)
+scheduler.add_job(schedule_morning, 'cron', hour=10, minute=0)
+scheduler.add_job(schedule_daily, 'cron', hour=13, minute=0)
+scheduler.add_job(schedule_evening, 'cron', hour=17, minute=0)
 scheduler.start()
+logger.info("✅ Планировщик запущен (10:00, 13:00, 17:00 по Юрге)")
 
 # ============================================
 # ЗАПУСК
