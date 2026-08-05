@@ -31,8 +31,8 @@ AGNES_API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
 
 TIMEZONE = ZoneInfo("Asia/Novokuznetsk")
 
-BOT_VERSION = "9.0.0"
-BOT_NAME = "Жизнь+ Супер-картинки"
+BOT_VERSION = "10.0.0"
+BOT_NAME = "Жизнь+ Супер-картинки (Европа)"
 
 DB_PATH = 'channel.db'
 LOG_PATH = 'bot_logs.txt'
@@ -192,13 +192,28 @@ def ask_ai(system, user, max_tokens=3000, retries=2):
     return None
 
 # ============================================================
-# ГЕНЕРАЦИЯ СУПЕР-КАРТИНОК (AGNES AI)
+# ГЕНЕРАЦИЯ СУПЕР-КАРТИНОК (AGNES AI С ПРОМПТОМ ДЛЯ ЕВРОПЕЙЦЕВ)
 # ============================================================
 
 def generate_image(prompt, width=1024, height=768):
-    """Генерация картинки через Agnes AI (бесплатно, топ-качество)"""
+    """Генерация картинки через Agnes AI с правильным промптом"""
     try:
         logger.info("🖼 Генерация супер-картинки через Agnes AI...")
+        
+        # ДОПОЛНЯЕМ ПРОМПТ ДЛЯ ЕВРОПЕЙЦЕВ И ПОЗИТИВА
+        full_prompt = f"""Hyper-realistic, cinematic photography style. {prompt}
+        
+Subject: European, Caucasian appearance, light skin, natural glowing complexion. Warm beaming smile, relaxed confident posture, exuding calmness, self-acceptance, and positive energy. Open body language, warm golden sunlight.
+
+Environment: Sunny day, golden hour lighting, warm sunlight filtering through leaves, soft lens flare. Lush green grass, trees, flowers in soft bloom. Vibe: peaceful, joyful, effortless beauty.
+
+Lighting: Soft golden backlight, rim light on hair and shoulders, warm skin tones, natural shadows.
+
+Style: Photorealistic, high detail, natural skin texture, no airbrushing, no plastic look. Magazine editorial quality, warm film-like color grading with amber and honey tones.
+
+Negative prompt: Asian face, Korean features, Japanese features, Chinese features, anime, cartoon, illustration, 3D render, plastic skin, blurry face, distorted face, stiff pose, over-saturated, cold tones, moody atmosphere, dark shadows, sad expression, angry expression, overly serious.
+
+Quality: 8K, masterpiece, award-winning photography, high detail, rich textures, natural movement."""
         
         headers = {
             "Authorization": f"Bearer {AGNES_API_KEY}",
@@ -207,7 +222,7 @@ def generate_image(prompt, width=1024, height=768):
         
         payload = {
             "model": "agnes-image-2.0-flash",
-            "prompt": prompt,
+            "prompt": full_prompt,
             "size": f"{width}x{height}",
             "extra_body": {
                 "response_format": "url"
@@ -1055,7 +1070,7 @@ def post_with_image(message):
         if message.chat.id not in ADMIN_IDS:
             return
         sessions[message.chat.id] = {"action": "post_with_image"}
-        bot.send_message(message.chat.id, "📝 Выбери тему для поста с картинкой:", reply_markup=theme_menu())
+        bot.send_message(message.chat.id, "📝 Выбери тему для поста с супер-картинкой:", reply_markup=theme_menu())
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
@@ -1064,7 +1079,7 @@ def only_image(message):
     try:
         if message.chat.id not in ADMIN_IDS:
             return
-        bot.send_message(message.chat.id, "📝 Введи описание для картинки:")
+        bot.send_message(message.chat.id, "📝 Введи описание для супер-картинки:")
         bot.register_next_step_handler(message, process_only_image)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -1468,7 +1483,7 @@ def handle_theme_selection(message):
             sessions[chat_id] = {}
             
         elif action == "post_with_image":
-            # === ПОСТ С КАРТИНКОЙ ===
+            # === ПОСТ С СУПЕР-КАРТИНКОЙ ===
             bot.send_message(chat_id, f"⏳ Генерация поста на тему '{theme}'...\n⏱ Ожидание до 30 сек")
             post = generate_post(theme)
             if not post:
