@@ -1,648 +1,816 @@
-import asyncio
-import json
-import logging
+import telebot
 import sqlite3
-import random
+import requests
+import os
+import json
 import time
-from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
-from pathlib import Path
+import logging
+import threading
+import uuid
+import base64
+import random
+import glob
+from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
+from flask import Flask
+import urllib3
 
-import aiosqlite
-import aiohttp
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
-from aiogram import F
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Конфигурация
-TOKEN = "ВАШ_TELEGRAM_BOT_TOKEN"
-CHANNEL_ID = -1001234567890  # ID канала
-GIGACHAT_API_KEY = "ВАШ_GIGACHAT_API_KEY"
-GIGACHAT_API_URL = "https://gigachat.devices.su/api/v1/chat/completions"
-TIMEZONE = ZoneInfo("Asia/Yekaterinburg")  # Юрга (UTC+5)
-ADMIN_IDS = [123456789]  # Ваш Telegram ID
+# ============================================
+# НАСТРОЙКИ
+# ============================================
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
+# ТВОИ ПРАВИЛЬНЫЕ КЛЮЧИ (БЕЗ ДВОЙНОГО КОДИРОВАНИЯ)
+GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
+GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjY1ZmQ5MTY5LTU5YzItNDVlMi1hNGU5LTkzMzE3NTczZTJiNw=="
+
+ADMIN_IDS = [8746212340]
+
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN не установлен!")
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Состояния для FSM
-class AdminStates(StatesGroup):
-    waiting_post = State()
-    waiting_test_question = State()
-    waiting_test_answer = State()
+# ============================================
+# УБИВАЕМ 409 НАВСЕГДА (УДАЛЕНИЕ OFFSET-ФАЙЛОВ)
+# ============================================
+def kill_409_forever():
+    """Полностью убивает 409: удаляет offset-файлы и вебхук"""
+    try:
+        # 1. Удаляем offset-файлы (ГЛАВНАЯ ПРИЧИНА 409)
+        offset_files = glob.glob('update-offset-*.json')
+        for f in offset_files:
+            try:
+                os.remove(f)
+                logger.info(f"🧹 Удалён offset-файл: {f}")
+            except:
+                pass
+        
+        # 2. Удаляем вебхук через API
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        response = requests.post(url, json={"drop_pending_updates": True})
+        logger.info(f"🧹 Удаление вебхука: {response.text}")
+        
+        # 3. Проверяем что вебхук удалён
+        time.sleep(1)
+        check = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo")
+        logger.info(f"🔍 Статус вебхука: {check.text}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка очистки: {e}")
+        return False
 
-# Базовые тесты
-BASE_TESTS = {
-    "stress": {
-        "name": "Уровень стресса",
-        "description": "Оцените свой текущий уровень стресса",
-        "questions": [
-            "Как часто вы чувствуете напряжение?",
-            "Сложно ли вам расслабиться?",
-            "Часто ли вы раздражаетесь?",
-            "Бывает ли бессонница?",
-            "Чувствуете ли вы усталость?",
-            "Трудно ли сосредоточиться?",
-            "Бывают ли головные боли?",
-            "Чувствуете ли вы тревогу?",
-            "Есть ли проблемы с аппетитом?",
-            "Чувствуете ли вы апатию?"
-        ],
-        "answers": ["Никогда", "Редко", "Иногда", "Часто", "Всегда"],
-        "premium": False
-    },
-    "relationship": {
-        "name": "Качество отношений",
-        "description": "Оцените свои отношения с близкими",
-        "questions": [
-            "Доверяете ли вы партнёру?",
-            "Часто ли вы ссоритесь?",
-            "Понимаете ли вы друг друга?",
-            "Есть ли общие интересы?",
-            "Поддерживаете ли вы друг друга?",
-            "Есть ли физическая близость?",
-            "Обсуждаете ли вы проблемы?",
-            "Планируете ли будущее вместе?",
-            "Уважаете ли вы границы?",
-            "Чувствуете ли вы любовь?"
-        ],
-        "answers": ["Нет", "Редко", "Иногда", "Часто", "Всегда"],
-        "premium": True
-    }
-}
+# ВЫЗЫВАЕМ ПРИ СТАРТЕ
+kill_409_forever()
+time.sleep(2)
 
-# Тематика для генерации постов
-POST_TOPICS = [
-    "прокрастинация", "мотивация", "самооценка", "страх", "тревога",
-    "отношения", "одиночество", "деньги", "цели", "привычки",
-    "эмоции", "выбор", "смысл", "счастье", "успех"
-]
+# ============================================
+# GIGACHAT (ПРАВИЛЬНАЯ АВТОРИЗАЦИЯ)
+# ============================================
+giga_token_cache = {"token": None, "expires": 0}
 
-@dataclass
-class TestResult:
-    user_id: int
-    test_type: str
-    score: int
-    answers: List[int]
-    timestamp: datetime
-    is_premium: bool
-
-class BotManager:
-    """Единый менеджер бота с решением всех проблем"""
+def get_giga_token():
+    """Получает токен GigaChat (без двойного кодирования)"""
+    if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
+        return giga_token_cache["token"]
     
-    def __init__(self):
-        self.bot = Bot(token=TOKEN)
-        self.storage = MemoryStorage()
-        self.dp = Dispatcher(storage=self.storage)
-        self.db_path = Path("bot_data.db")
-        self._setup_database()
-        self._setup_handlers()
-        self.post_queue = []
-        self.is_running = False
+    try:
+        # ПЕРЕДАЁМ КЛЮЧИ КАК ЕСТЬ (БЕЗ ДВОЙНОГО КОДИРОВАНИЯ)
+        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
+        base64_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
         
-    def _setup_database(self):
-        """Инициализация БД с правильной схемой"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Таблица пользователей
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_premium BOOLEAN DEFAULT 0
-            )
-        """)
-        
-        # Таблица результатов тестов
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS test_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                test_type TEXT,
-                score INTEGER,
-                answers TEXT,
-                is_premium BOOLEAN,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
-            )
-        """)
-        
-        # Таблица постов (для истории)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT,
-                topic TEXT,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Таблица для offset (решение проблемы 409)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS bot_state (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Сохраняем последний offset
-        cursor.execute(
-            "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
-            ("last_update_offset", "0")
+        headers = {
+            'Authorization': f'Basic {base64_auth}',
+            'RqUID': str(uuid.uuid4()),
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        response = requests.post(
+            'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
+            headers=headers,
+            data='scope=GIGACHAT_API_PERS',
+            timeout=15,
+            verify=False
         )
         
+        if response.status_code != 200:
+            logger.error(f"❌ Ошибка токена: {response.status_code} - {response.text}")
+            return None
+            
+        token = response.json()['access_token']
+        giga_token_cache["token"] = token
+        giga_token_cache["expires"] = time.time() + 3500
+        logger.info("✅ Токен GigaChat получен")
+        return token
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка токена: {e}")
+        return None
+
+def ask_giga(system, user, max_tokens=2500):
+    """Запрос к GigaChat (ТОЛЬКО ЧЕРЕЗ GIGACHAT)"""
+    token = get_giga_token()
+    if not token:
+        logger.error("❌ Нет токена")
+        return None
+    
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'RqUID': str(uuid.uuid4()),
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        "model": "GigaChat",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ],
+        "temperature": 0.9,
+        "max_tokens": max_tokens
+    }
+    
+    try:
+        response = requests.post(
+            'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
+            headers=headers,
+            json=payload,
+            timeout=30,
+            verify=False
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"❌ GigaChat ошибка: {response.status_code}")
+            return None
+        
+        return response.json()['choices'][0]['message']['content']
+        
+    except Exception as e:
+        logger.error(f"❌ GigaChat ошибка: {e}")
+        return None
+
+def ask_giga_with_wait(system, user, max_tokens=2500):
+    """Ждёт 30 секунд (ДАЖЕ ЕСЛИ GIGACHAT ОТВЕТИЛ БЫСТРО)"""
+    start_time = time.time()
+    result = ask_giga(system, user, max_tokens)
+    elapsed = time.time() - start_time
+    
+    # Если GigaChat ответил быстрее 30 секунд — ждём
+    if elapsed < 30:
+        wait_time = 30 - elapsed
+        logger.info(f"⏳ Ожидание {wait_time:.1f} секунд")
+        time.sleep(wait_time)
+    
+    return result
+
+# ============================================
+# TELEGRAM БОТ
+# ============================================
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# ============================================
+# БАЗА ДАННЫХ
+# ============================================
+DB_PATH = 'channel.db'
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS daily_tests 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+              topic TEXT, 
+              questions TEXT, 
+              created_at TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS stats 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+              free_count INTEGER DEFAULT 0, 
+              paid_count INTEGER DEFAULT 0)''')
+c.execute("SELECT COUNT(*) FROM stats")
+if c.fetchone()[0] == 0:
+    c.execute("INSERT INTO stats (free_count, paid_count) VALUES (0, 0)")
+conn.commit()
+
+# ============================================
+# ТЕМЫ ТЕСТОВ
+# ============================================
+TEST_TOPICS = {
+    "психология": "🧠 Психологическое состояние, эмоции, стресс",
+    "отношения": "💕 Любовь, дружба, семья, коммуникация",
+    "карьера": "💼 Профессиональное развитие, цели, успех",
+    "здоровье": "💪 Физическое и ментальное здоровье",
+    "финансы": "💰 Отношение к деньгам, финансовое мышление",
+    "личность": "🌟 Характер, темперамент, личностные качества"
+}
+
+# ============================================
+# НЛП-ПРОМПТЫ (БЕЗ СЛАЩАВОСТИ)
+# ============================================
+def generate_test_questions(topic, count=10):
+    system = """Ты — клинический психолог с 25-летним стажем.
+    Ты не задаёшь шаблонных вопросов. Твои вопросы заставляют человека задуматься.
+    Вопросы должны быть живыми, конкретными, создавать образы и чувства.
+    Без штампов: «Как вы оцениваете...», «Как вы относитесь...»
+    Вопросы — как маленькие встречи с собой.
+    Каждый вопрос уникален."""
+    
+    user = f"""Составь {count} глубоких психологических вопросов на тему "{topic}" в формате JSON:
+    [
+        {{
+            "question": "текст вопроса?",
+            "options": {{
+                "A": "вариант 1",
+                "B": "вариант 2",
+                "C": "вариант 3",
+                "D": "вариант 4"
+            }},
+            "scores": {{
+                "A": 0,
+                "B": 1,
+                "C": 2,
+                "D": 3
+            }}
+        }}
+    ]
+    Верни ТОЛЬКО JSON."""
+    
+    response = ask_giga_with_wait(system, user, max_tokens=3000)
+    if not response:
+        return None
+    
+    try:
+        start = response.find('[')
+        end = response.rfind(']') + 1
+        if start == -1 or end == -1:
+            return None
+        
+        data = json.loads(response[start:end])
+        if isinstance(data, dict) and 'questions' in data:
+            data = data['questions']
+        
+        parsed = []
+        for q in data:
+            if 'question' in q and 'options' in q:
+                if 'scores' not in q:
+                    q['scores'] = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+                parsed.append(q)
+        
+        return parsed[:count] if parsed else None
+    except Exception as e:
+        logger.error(f"Ошибка парсинга: {e}")
+        return None
+
+def generate_analysis_free(topic, answers, score, total):
+    system = """Ты — клинический психолог с 25-летним стажем.
+    Ты говоришь коротко, но ёмко. Каждая фраза — как укол иглой: остро, но исцеляюще.
+    Ты не утешаешь, ты даёшь опору.
+    Ты используешь НЛП-язык: пресуппозиции, присоединение к реальности.
+    Ты не даёшь советов, ты задаёшь вопросы.
+    Без воды, без шаблонов.
+    Объём: 700+ знаков. Только разбор + 2 вопроса для размышления."""
+    
+    user = f"""Тема: {topic}
+Ответы: {answers}
+Баллы: {score} из {total}
+Проведи глубокий разбор личности. Дай 2 инсайта и 2 вопроса для размышления.
+БЕЗ книг, упражнений и видео."""
+    
+    response = ask_giga_with_wait(system, user, max_tokens=2000)
+    if not response or len(response) < 500:
+        return None
+    return response
+
+def generate_analysis_paid(topic, answers, score, total):
+    system = """Ты — команда из двух экспертов мирового уровня.
+
+1. КЛИНИЧЕСКИЙ ПСИХОЛОГ:
+   - Ты называешь вещи своими именами, но не рубишь с плеча.
+   - Ты используешь пресуппозиции: «Когда ты осознаешь этот паттерн...»
+   - Ты даёшь 2 инсайта, которые человек не замечал.
+   - Ты заканчиваешь фразой, которая останется с ним надолго.
+
+2. КОУЧ МИРОВОГО УРОВНЯ:
+   - Ты не мотивируешь, ты создаёшь движение.
+   - Ты говоришь: «Ты уже готов. Ты просто ждал разрешения начать».
+   - Ты даёшь 3 конкретных шага, которые можно сделать сегодня.
+   - Книги, упражнения, видео — только те, которые действительно работают.
+
+ВСЁ НА РУССКОМ ЯЗЫКЕ.
+Объём: 1400+ знаков."""
+    
+    user = f"""Тема: {topic}
+Ответы: {answers}
+Баллы: {score} из {total}
+Проведи полный разбор личности и дай мощные рекомендации.
+Включи: глубокий психологический портрет, 2 инсайта, конкретные шаги на неделю, книги, упражнения, видео."""
+    
+    response = ask_giga_with_wait(system, user, max_tokens=3000)
+    if not response or len(response) < 1000:
+        return None
+    return response
+
+def generate_analysis(topic, answers, score, total, is_paid):
+    if is_paid:
+        return generate_analysis_paid(topic, answers, score, total)
+    else:
+        return generate_analysis_free(topic, answers, score, total)
+
+def generate_post():
+    themes = [
+        "утренняя энергия", "внутренняя сила", "радость в простых вещах",
+        "преодоление страхов", "любовь к себе", "благодарность",
+        "мотивация", "осознанность", "отношения", "финансовое мышление"
+    ]
+    theme = random.choice(themes)
+    
+    system = """Ты — психолог, который пишет посты, от которых хочется действовать.
+    Ты не вдохновляешь, ты передаёшь энергию.
+    Ты используешь НЛП-язык: пресуппозиции, присоединение.
+    Без слащавости. Каждый пост уникальный."""
+    
+    user = f"""Напиши пост на тему "{theme}" для Telegram.
+    Длина: 800–1000 знаков. Заголовок с эмодзи. Практический совет.
+    Мотивирующая фраза. Хештеги."""
+    
+    response = ask_giga_with_wait(system, user, max_tokens=2000)
+    if not response or len(response) < 700:
+        return None
+    return response
+
+# ============================================
+# ВЕБ-СЕРВЕР
+# ============================================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "OK"
+
+@app.route('/health')
+def health():
+    return {"status": "ok"}
+
+def run_flask():
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+
+threading.Thread(target=run_flask, daemon=True).start()
+
+# ============================================
+# МЕНЮ
+# ============================================
+def get_main_menu(chat_id):
+    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    mk.add('🚀 Старт', '🎯 Пройти тест')
+    mk.add('❤️ О канале')
+    if chat_id in ADMIN_IDS:
+        mk.add('👑 Админ-панель')
+    return mk
+
+def admin_menu():
+    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    mk.add('📤 Отправить пост', '🧠 Тест в канал')
+    mk.add('📊 Статистика')
+    mk.add('👑 Главное меню')
+    return mk
+
+def test_type_menu():
+    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    mk.add('🧠 Бесплатный (10 вопросов)')
+    mk.add('💎 Платный (20 вопросов)')
+    mk.add('🔙 Назад')
+    return mk
+
+# ============================================
+# СОСТОЯНИЯ
+# ============================================
+sessions = {}
+
+# ============================================
+# ОБРАБОТЧИКИ
+# ============================================
+@bot.message_handler(commands=['start'])
+def start(message):
+    chat_id = message.chat.id
+    
+    if ' ' in message.text:
+        param = message.text.split(' ', 1)[1]
+        if param.startswith('daily_'):
+            try:
+                _, topic, tid = param.split('_')
+                c.execute("SELECT questions FROM daily_tests WHERE id=?", (tid,))
+                row = c.fetchone()
+                if row:
+                    questions = json.loads(row[0])
+                    sessions[chat_id] = {
+                        'topic': topic,
+                        'questions': questions,
+                        'answers': [],
+                        'q': 0,
+                        'scores': [],
+                        'is_paid': False
+                    }
+                    bot.send_message(chat_id, f"📌 Ежедневный тест: {topic}")
+                    send_question(chat_id)
+                    return
+            except:
+                pass
+    
+    welcome = "🌟 Добро пожаловать в бота Жизнь+!\n\nНажми «🎯 Пройти тест» или «❤️ О канале»."
+    bot.send_message(chat_id, welcome, reply_markup=get_main_menu(chat_id))
+
+@bot.message_handler(func=lambda m: m.text == '🚀 Старт')
+def start_button(message):
+    start(message)
+
+@bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
+def back_to_main_from_admin(message):
+    start(message)
+
+@bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
+def admin_panel_button(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
+
+@bot.message_handler(func=lambda m: m.text == '❤️ О канале')
+def about_channel(message):
+    text = (
+        "Жизнь+ — это не просто канал. Это пространство, где каждый день начинается с новой силы. "
+        "Здесь ты находишь ответы, которых не ждал, и чувствуешь, как внутри просыпается энергия, "
+        "которую ты давно искал. Мы говорим о том, что действительно важно — о внутренней опоре, "
+        "о легкости в теле и ясности в голове. Подпишись, чтобы напоминать себе: ты уже на верном пути. "
+        "А бот Жизнь+ поможет тебе заглянуть в себя глубже и увидеть то, что всегда было с тобой."
+    )
+    mk = telebot.types.InlineKeyboardMarkup()
+    mk.add(telebot.types.InlineKeyboardButton(
+        "📢 Перейти в канал",
+        url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"
+    ))
+    bot.send_message(message.chat.id, text, reply_markup=mk)
+
+@bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
+def choose_test_type(message):
+    bot.send_message(
+        message.chat.id,
+        "🎯 Выберите тип теста:\n\n🧠 Бесплатный — 10 вопросов\n💎 Платный — 20 вопросов",
+        reply_markup=test_type_menu()
+    )
+
+@bot.message_handler(func=lambda m: m.text == '🔙 Назад')
+def back_to_main_from_test(message):
+    start(message)
+
+@bot.message_handler(func=lambda m: m.text == '🧠 Бесплатный (10 вопросов)')
+def free_test(message):
+    show_topics(message, 'free', 10)
+
+@bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов)')
+def paid_test(message):
+    chat_id = message.chat.id
+    if chat_id in ADMIN_IDS:
+        show_topics(message, 'paid', 20)
+    else:
+        bot.send_message(
+            chat_id,
+            "💎 Платный тест — 50 ₽\n\nА пока пройдите бесплатный.",
+            reply_markup=test_type_menu()
+        )
+
+# ============================================
+# ВЫБОР ТЕМЫ
+# ============================================
+def show_topics(message, test_type, count):
+    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+    for topic, emoji in TEST_TOPICS.items():
+        mk.add(telebot.types.InlineKeyboardButton(
+            emoji,
+            callback_data=f"{test_type}_{topic}_{count}"
+        ))
+    mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
+    bot.send_message(
+        message.chat.id,
+        f"🎯 Выберите тему:\n\n{count} вопросов",
+        reply_markup=mk
+    )
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith(('free', 'paid')))
+def topic_callback(c):
+    try:
+        test_type, topic, count = c.data.split('_')
+        is_paid = test_type == 'paid'
+        
+        bot.edit_message_text(
+            "⏳ Генерация теста...\nПодождите до 30 секунд.",
+            c.message.chat.id,
+            c.message.message_id
+        )
+        
+        questions = generate_test_questions(topic, int(count))
+        if not questions:
+            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест. Попробуйте позже.")
+            return
+        
+        sessions[c.message.chat.id] = {
+            'topic': topic,
+            'questions': questions,
+            'answers': [],
+            'q': 0,
+            'scores': [],
+            'is_paid': is_paid
+        }
+        bot.delete_message(c.message.chat.id, c.message.message_id)
+        send_question(c.message.chat.id)
+    except Exception as e:
+        bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
+
+@bot.callback_query_handler(func=lambda c: c.data == 'cancel')
+def cancel_callback(c):
+    bot.delete_message(c.message.chat.id, c.message.message_id)
+    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
+
+# ============================================
+# ПРОХОЖДЕНИЕ ТЕСТА
+# ============================================
+def send_question(chat_id):
+    s = sessions.get(chat_id)
+    if not s:
+        bot.send_message(chat_id, "❌ Активный тест не найден. Начните новый через «🎯 Пройти тест».")
+        return
+    
+    if s['q'] >= len(s['questions']):
+        finish_test(chat_id)
+        return
+    
+    q = s['questions'][s['q']]
+    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    for opt, txt in q['options'].items():
+        mk.add(f"{opt}) {txt}")
+    mk.add('⏹ Прервать тест')
+    
+    bot.send_message(
+        chat_id,
+        f"📝 Вопрос {s['q']+1}/{len(s['questions'])}\n"
+        f"📌 Тема: {s['topic'].title()}\n\n"
+        f"{q['question']}",
+        reply_markup=mk
+    )
+
+@bot.message_handler(func=lambda m: m.text == '⏹ Прервать тест')
+def stop_test(message):
+    chat_id = message.chat.id
+    if chat_id in sessions:
+        del sessions[chat_id]
+    bot.send_message(chat_id, "⏹ Тест прерван", reply_markup=get_main_menu(chat_id))
+
+@bot.message_handler(func=lambda m: m.text and m.text[0] in 'ABCD')
+def handle_answer(message):
+    s = sessions.get(message.chat.id)
+    if not s:
+        return
+    if s['q'] >= len(s['questions']):
+        return
+    
+    letter = message.text[0]
+    q = s['questions'][s['q']]
+    s['answers'].append(letter)
+    s['scores'].append(q['scores'][letter])
+    s['q'] += 1
+    send_question(message.chat.id)
+
+# ============================================
+# ЗАВЕРШЕНИЕ ТЕСТА
+# ============================================
+def finish_test(chat_id):
+    s = sessions.get(chat_id)
+    if not s:
+        return
+    
+    score = sum(s['scores'])
+    total = len(s['questions']) * 3
+    answers = ', '.join(s['answers'])
+    is_paid = s.get('is_paid', False)
+    
+    if is_paid:
+        c.execute("UPDATE stats SET paid_count = paid_count + 1")
+    else:
+        c.execute("UPDATE stats SET free_count = free_count + 1")
+    conn.commit()
+    
+    bot.send_message(
+        chat_id,
+        f"📊 Тест завершен!\n\n"
+        f"✅ Результат: {score} из {total}\n"
+        f"⏳ Генерация анализа...\nДо 30 секунд."
+    )
+    
+    analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
+    if not analysis:
+        bot.send_message(chat_id, "❌ Не удалось сгенерировать анализ. Попробуйте позже.")
+        del sessions[chat_id]
+        return
+    
+    bot.send_message(
+        chat_id,
+        f"🔍 РЕЗУЛЬТАТЫ ТЕСТА\n\n{analysis}",
+        reply_markup=get_main_menu(chat_id)
+    )
+    
+    del sessions[chat_id]
+    bot.send_message(chat_id, "✨ Готово!", reply_markup=get_main_menu(chat_id))
+
+# ============================================
+# АДМИН-КНОПКИ
+# ============================================
+@bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
+def admin_post(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 30 секунд.")
+    text = generate_post()
+    if not text:
+        bot.send_message(message.chat.id, "❌ Не удалось сгенерировать пост.")
+        return
+    
+    bot.send_message(CHANNEL_ID, text)
+    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
+
+@bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
+def admin_test_to_channel(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+    for topic, emoji in TEST_TOPICS.items():
+        mk.add(telebot.types.InlineKeyboardButton(
+            emoji,
+            callback_data=f"admin_test_{topic}"
+        ))
+    mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="admin_cancel"))
+    
+    bot.send_message(
+        message.chat.id,
+        "🎯 Выберите тему для теста в канал:",
+        reply_markup=mk
+    )
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('admin_test_'))
+def admin_test_topic_callback(c):
+    try:
+        topic = c.data.replace('admin_test_', '')
+        bot.edit_message_text(
+            f"⏳ Генерация теста по теме {topic}...",
+            c.message.chat.id,
+            c.message.message_id
+        )
+        
+        questions = generate_test_questions(topic, 10)
+        if not questions:
+            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест.")
+            return
+        
+        c.execute(
+            "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
+            (topic, json.dumps(questions), datetime.now().isoformat())
+        )
         conn.commit()
-        conn.close()
-        logger.info("База данных инициализирована")
-    
-    async def get_last_offset(self) -> int:
-        """Получение сохранённого offset для избежания 409"""
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT value FROM bot_state WHERE key = 'last_update_offset'"
-            ) as cursor:
-                row = await cursor.fetchone()
-                return int(row[0]) if row else 0
-    
-    async def save_offset(self, offset: int):
-        """Сохранение offset в БД"""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
-                ("last_update_offset", str(offset))
-            )
-            await db.commit()
-    
-    def _setup_handlers(self):
-        """Настройка всех обработчиков"""
+        test_id = c.lastrowid
         
-        # Команда старт
-        @self.dp.message(Command("start"))
-        async def cmd_start(message: Message):
-            user = message.from_user
-            async with aiosqlite.connect(self.db_path) as db:
-                await db.execute(
-                    "INSERT OR IGNORE INTO users (user_id, username, first_name, last_name) VALUES (?, ?, ?, ?)",
-                    (user.id, user.username, user.first_name, user.last_name)
-                )
-                await db.commit()
-            
-            await message.answer(
-                "👋 Привет! Я бот канала «Жизнь+».\n\n"
-                "Здесь честно и без пафоса о психологии, отношениях и деньгах.\n\n"
-                "Доступные команды:\n"
-                "/test - пройти тест\n"
-                "/post - получить случайный пост (для админов)\n"
-                "/help - помощь"
-            )
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton(
+            "🎯 Пройти тест",
+            url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"
+        ))
         
-        # Команда помощи
-        @self.dp.message(Command("help"))
-        async def cmd_help(message: Message):
-            await message.answer(
-                "📖 Доступные команды:\n\n"
-                "/test - пройти бесплатный или платный тест\n"
-                "/start - начать заново\n"
-                "/help - эта справка\n\n"
-                "Тесты проводятся ежедневно в 13:00 по Юрге\n"
-                "Посты выходят в 10:00 и 17:00\n\n"
-                "Вопросы и предложения: @admin"
-            )
-        
-        # Команда теста
-        @self.dp.message(Command("test"))
-        async def cmd_test(message: Message):
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="🧠 Бесплатный тест (10 вопросов)", callback_data="test_free")],
-                    [InlineKeyboardButton(text="💎 Платный тест (20 вопросов)", callback_data="test_premium")],
-                    [InlineKeyboardButton(text="📊 Мои результаты", callback_data="my_results")]
-                ]
-            )
-            await message.answer(
-                "Выберите тип теста:\n\n"
-                "Бесплатный - быстрая оценка состояния\n"
-                "Платный - глубокий анализ с рекомендациями",
-                reply_markup=keyboard
-            )
-        
-        # Обработка выбора теста
-        @self.dp.callback_query(F.data.startswith("test_"))
-        async def handle_test_selection(callback: CallbackQuery, state: FSMContext):
-            test_type = callback.data.replace("test_", "")
-            is_premium = test_type == "premium"
-            
-            # Сохраняем состояние
-            await state.set_data({
-                "test_type": test_type,
-                "is_premium": is_premium,
-                "current_question": 0,
-                "answers": [],
-                "test_name": random.choice(list(BASE_TESTS.keys()))
-            })
-            
-            # Получаем тест
-            test_data = BASE_TESTS[random.choice(list(BASE_TESTS.keys()))]
-            if is_premium and not test_data.get("premium", False):
-                # Если выбран платный, но тест бесплатный - подменяем
-                test_data = random.choice([t for t in BASE_TESTS.values() if t.get("premium", False)])
-            
-            await state.update_data(test_data=test_data)
-            
-            # Отправляем первый вопрос
-            await send_question(callback.message, state, 0)
-            await callback.answer()
-        
-        async def send_question(message: Message, state: FSMContext, question_idx: int):
-            data = await state.get_data()
-            test_data = data.get("test_data")
-            questions = test_data["questions"]
-            
-            if question_idx >= len(questions):
-                # Тест завершён
-                await finish_test(message, state)
-                return
-            
-            question = questions[question_idx]
-            answers = test_data["answers"]
-            
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text=ans, callback_data=f"q{question_idx}_a{idx}")]
-                    for idx, ans in enumerate(answers)
-                ]
-            )
-            
-            await message.answer(
-                f"📝 Вопрос {question_idx + 1}/{len(questions)}\n\n{question}",
-                reply_markup=keyboard
-            )
-        
-        # Обработка ответа на вопрос
-        @self.dp.callback_query(F.data.startswith("q"))
-        async def handle_answer(callback: CallbackQuery, state: FSMContext):
-            data = await callback.data.split("_")
-            question_idx = int(data[0].replace("q", ""))
-            answer_idx = int(data[1].replace("a", ""))
-            
-            state_data = await state.get_data()
-            answers = state_data.get("answers", [])
-            answers.append(answer_idx)
-            await state.update_data(answers=answers)
-            
-            # Переход к следующему вопросу
-            next_question = question_idx + 1
-            state_data = await state.get_data()
-            test_data = state_data.get("test_data")
-            
-            if next_question >= len(test_data["questions"]):
-                await finish_test(callback.message, state)
-            else:
-                await send_question(callback.message, state, next_question)
-            
-            await callback.answer()
-        
-        async def finish_test(message: Message, state: FSMContext):
-            data = await state.get_data()
-            answers = data.get("answers", [])
-            test_data = data.get("test_data")
-            is_premium = data.get("is_premium", False)
-            
-            # Рассчёт результата
-            total = len(answers)
-            if total == 0:
-                await message.answer("Тест прерван. Попробуйте снова /test")
-                return
-            
-            # Простая аналитика
-            score = sum(answers) / total  # Средний балл
-            score_percent = int((score / (len(test_data["answers"]) - 1)) * 100)
-            
-            # Сохраняем результат
-            async with aiosqlite.connect(self.db_path) as db:
-                await db.execute(
-                    "INSERT INTO test_results (user_id, test_type, score, answers, is_premium) VALUES (?, ?, ?, ?, ?)",
-                    (message.from_user.id, test_data["name"], score_percent, json.dumps(answers), is_premium)
-                )
-                await db.commit()
-            
-            # Формируем результат
-            result_text = f"📊 Результат теста «{test_data['name']}»\n\n"
-            result_text += f"Ваш показатель: {score_percent}%\n\n"
-            
-            if score_percent < 30:
-                result_text += "✅ Всё отлично! Продолжайте в том же духе."
-            elif score_percent < 60:
-                result_text += "⚠️ Есть над чем поработать. Обратите внимание на область, которая вызывает напряжение."
-            else:
-                result_text += "🔴 Требуется внимание. Рекомендуем обратиться к специалисту или начать работать над этим."
-            
-            if is_premium:
-                # Дополнительные рекомендации для платных тестов
-                result_text += "\n\n📚 Рекомендации:\n"
-                result_text += "• Книга: «Эмоциональный интеллект» Дэниел Гоулман\n"
-                result_text += "• Упражнение: Дневник благодарности (записывайте 3 хороших события в день)\n"
-                result_text += "• Видео: TED «Как перестать беспокоиться»\n"
-                result_text += "• Практика: Медитация 5 минут в день"
-            
-            await message.answer(result_text)
-            await state.clear()
-        
-        # Админ-панель
-        @self.dp.message(Command("admin"))
-        async def admin_panel(message: Message):
-            if message.from_user.id not in ADMIN_IDS:
-                await message.answer("⛔ Доступ запрещён")
-                return
-            
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="✍️ Создать пост", callback_data="admin_post")],
-                    [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-                    [InlineKeyboardButton(text="⏰ Расписание", callback_data="admin_schedule")],
-                    [InlineKeyboardButton(text="🔄 Обновить тесты", callback_data="admin_tests")]
-                ]
-            )
-            await message.answer("👨‍💼 Админ-панель", reply_markup=keyboard)
-        
-        @self.dp.callback_query(F.data.startswith("admin_"))
-        async def admin_actions(callback: CallbackQuery, state: FSMContext):
-            action = callback.data.replace("admin_", "")
-            
-            if callback.from_user.id not in ADMIN_IDS:
-                await callback.answer("⛔ Доступ запрещён")
-                return
-            
-            if action == "post":
-                await callback.message.answer("Введите текст поста для канала:")
-                await state.set_state(AdminStates.waiting_post)
-            elif action == "stats":
-                await show_stats(callback.message)
-            elif action == "schedule":
-                await show_schedule(callback.message)
-            elif action == "tests":
-                await update_tests(callback.message)
-            
-            await callback.answer()
-        
-        @self.dp.message(AdminStates.waiting_post)
-        async def handle_admin_post(message: Message, state: FSMContext):
-            if message.from_user.id not in ADMIN_IDS:
-                return
-            
-            try:
-                await self.bot.send_message(CHANNEL_ID, message.text)
-                await message.answer("✅ Пост отправлен в канал!")
-                
-                # Сохраняем в историю
-                async with aiosqlite.connect(self.db_path) as db:
-                    await db.execute(
-                        "INSERT INTO posts (content, topic) VALUES (?, ?)",
-                        (message.text, "admin_post")
-                    )
-                    await db.commit()
-            except Exception as e:
-                await message.answer(f"❌ Ошибка: {e}")
-            
-            await state.clear()
-        
-        async def show_stats(message: Message):
-            async with aiosqlite.connect(self.db_path) as db:
-                # Количество пользователей
-                async with db.execute("SELECT COUNT(*) FROM users") as cursor:
-                    users_count = (await cursor.fetchone())[0]
-                
-                # Количество тестов
-                async with db.execute("SELECT COUNT(*) FROM test_results") as cursor:
-                    tests_count = (await cursor.fetchone())[0]
-                
-                # Количество платных тестов
-                async with db.execute("SELECT COUNT(*) FROM test_results WHERE is_premium = 1") as cursor:
-                    premium_count = (await cursor.fetchone())[0]
-                
-                # Средний балл
-                async with db.execute("SELECT AVG(score) FROM test_results") as cursor:
-                    avg_score = (await cursor.fetchone())[0] or 0
-            
-            stats_text = f"📊 Статистика:\n\n"
-            stats_text += f"👥 Пользователей: {users_count}\n"
-            stats_text += f"📝 Всего тестов: {tests_count}\n"
-            stats_text += f"💎 Платных тестов: {premium_count}\n"
-            stats_text += f"📈 Средний балл: {avg_score:.1f}%"
-            
-            await message.answer(stats_text)
-        
-        async def show_schedule(message: Message):
-            schedule_text = "⏰ Расписание:\n\n"
-            schedule_text += "📝 Посты:\n"
-            schedule_text += "  • 10:00 - утренний пост\n"
-            schedule_text += "  • 17:00 - вечерний пост\n\n"
-            schedule_text += "🧠 Тесты:\n"
-            schedule_text += "  • 13:00 - бесплатный тест (10 вопросов)\n"
-            schedule_text += "  • 13:00 - платный тест (20 вопросов)\n\n"
-            schedule_text += "🕐 Время указано по Юрге (UTC+5)"
-            
-            await message.answer(schedule_text)
-        
-        async def update_tests(message: Message):
-            # Здесь можно добавить логику обновления тестов
-            await message.answer("🔄 Тесты обновлены (заглушка)")
-    
-    async def generate_post(self, topic: str = None) -> str:
-        """Генерация уникального поста через GigaChat"""
-        if not topic:
-            topic = random.choice(POST_TOPICS)
-        
-        prompt = f"""
-        Напиши пост для канала о психологии и саморазвитии на тему: {topic}
-        
-        Требования:
-        - Без пафоса и «ты уникален»
-        - Честно, прямо, как живой человек
-        - Автор - не психолог, а просто человек, делящийся мыслями
-        - Используй НЛП-язык, но без слащавости
-        - Объём: 150-250 слов
-        - Без шаблонов, каждый пост уникальный
-        - Закончи вопросом к читателю
-        
-        Ответ дай в формате обычного текста, без маркдауна.
-        """
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    "Authorization": f"Bearer {GIGACHAT_API_KEY}",
-                    "Content-Type": "application/json"
-                }
-                data = {
-                    "model": "gigachat",
-                    "messages": [
-                        {"role": "system", "content": "Ты - автор канала о психологии и саморазвитии. Пиши честно, прямо, без пафоса."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.9,
-                    "max_tokens": 500
-                }
-                
-                async with session.post(
-                    GIGACHAT_API_URL,
-                    headers=headers,
-                    json=data,
-                    timeout=aiohttp.ClientTimeout(total=30)  # Решение проблемы с таймаутом
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        post_text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        
-                        # Добавляем хештеги
-                        hashtags = f" #{topic} #жизньплюс #саморазвитие"
-                        return post_text + "\n\n" + hashtags
-                    else:
-                        logger.error(f"GigaChat error: {response.status}")
-                        return self._get_fallback_post(topic)
-        except asyncio.TimeoutError:
-            logger.error("GigaChat timeout after 30 seconds")
-            return self._get_fallback_post(topic)
-        except Exception as e:
-            logger.error(f"GigaChat error: {e}")
-            return self._get_fallback_post(topic)
-    
-    def _get_fallback_post(self, topic: str) -> str:
-        """Резервный пост при ошибке GigaChat"""
-        fallbacks = [
-            f"Мы часто боимся того, что ещё не случилось. А если подумать: страх — это просто эмоция, а не факт. \n\nКак думаешь, что бы ты сделал, если бы не боялся? #{topic} #жизньплюс",
-            f"Важно не то, сколько раз ты упал, а то, сколько раз поднялся. \n\nНо иногда можно и полежать — это нормально. \n\nКакой совет ты дал бы себе в сложной ситуации? #{topic} #жизньплюс",
-            f"Отношения — это не про то, кто прав, а про то, как быть вместе. \n\nИ иногда лучше промолчать, чем сказать лишнее. \n\nЧто для тебя важно в отношениях? #{topic} #жизньплюс"
-        ]
-        return random.choice(fallbacks)
-    
-    async def scheduled_posts(self):
-        """Планировщик постов"""
-        while self.is_running:
-            try:
-                now = datetime.now(TIMEZONE)
-                current_hour = now.hour
-                current_minute = now.minute
-                
-                # Посты в 10:00 и 17:00
-                if (current_hour == 10 and current_minute == 0) or \
-                   (current_hour == 17 and current_minute == 0):
-                    
-                    topic = random.choice(POST_TOPICS)
-                    post_text = await self.generate_post(topic)
-                    
-                    # Отправка с обработкой ошибок
-                    try:
-                        await self.bot.send_message(CHANNEL_ID, post_text)
-                        logger.info(f"Post sent at {now.strftime('%H:%M')}")
-                        
-                        # Сохраняем в историю
-                        async with aiosqlite.connect(self.db_path) as db:
-                            await db.execute(
-                                "INSERT INTO posts (content, topic) VALUES (?, ?)",
-                                (post_text, topic)
-                            )
-                            await db.commit()
-                    except Exception as e:
-                        logger.error(f"Post send error: {e}")
-                
-                # Тесты в 13:00
-                if current_hour == 13 and current_minute == 0:
-                    await self.send_daily_tests()
-                
-                await asyncio.sleep(30)  # Проверка каждые 30 секунд
-                
-            except Exception as e:
-                logger.error(f"Scheduler error: {e}")
-                await asyncio.sleep(30)
-    
-    async def send_daily_tests(self):
-        """Отправка ежедневных тестов"""
-        try:
-            # Отправка бесплатного теста
-            free_test = random.choice([t for t in BASE_TESTS.values() if not t.get("premium", False)])
-            await self.bot.send_message(
-                CHANNEL_ID,
-                f"🧠 Бесплатный тест дня: «{free_test['name']}»\n\n"
-                f"{free_test['description']}\n\n"
-                f"Чтобы пройти, напишите /test в боте"
-            )
-            
-            # Отправка платного теста
-            premium_test = random.choice([t for t in BASE_TESTS.values() if t.get("premium", False)])
-            await self.bot.send_message(
-                CHANNEL_ID,
-                f"💎 Платный тест дня: «{premium_test['name']}»\n\n"
-                f"{premium_test['description']}\n\n"
-                f"Чтобы пройти, напишите /test и выберите платный вариант"
-            )
-            
-            logger.info("Daily tests sent")
-        except Exception as e:
-            logger.error(f"Daily tests error: {e}")
-    
-    async def run(self):
-        """Запуск бота с решением всех проблем"""
-        self.is_running = True
-        
-        # Получаем последний offset
-        last_offset = await self.get_last_offset()
-        
-        # Запускаем планировщик
-        asyncio.create_task(self.scheduled_posts())
-        
-        # Запускаем бота с правильным offset
-        try:
-            # Удаляем вебхук для избежания 409
-            await self.bot.delete_webhook(drop_pending_updates=True)
-            
-            # Запускаем polling с сохранением offset
-            await self.dp.start_polling(
-                self.bot,
-                offset=last_offset,
-                allowed_updates=["message", "callback_query"],
-                on_startup=self._on_startup,
-                on_shutdown=self._on_shutdown
-            )
-        except Exception as e:
-            logger.error(f"Bot run error: {e}")
-            # Если ошибка 409, пробуем перезапустить с удалением offset
-            if "409" in str(e):
-                logger.info("Conflict detected, resetting offset...")
-                await self.save_offset(0)
-                await self.dp.start_polling(
-                    self.bot,
-                    offset=0,
-                    allowed_updates=["message", "callback_query"]
-                )
-    
-    async def _on_startup(self):
-        """Действия при старте"""
-        logger.info("Bot started successfully")
-        # Сохраняем текущий offset
-        await self.save_offset(0)
-    
-    async def _on_shutdown(self):
-        """Действия при остановке"""
-        self.is_running = False
-        logger.info("Bot stopped")
+        bot.send_message(
+            CHANNEL_ID,
+            f"🧠 ТЕСТ ПО ТЕМЕ: {topic.upper()}\n\n📊 10 вопросов\n\nПроверьте себя прямо сейчас!",
+            reply_markup=mk
+        )
+        bot.edit_message_text(
+            f"✅ Тест по теме {topic} отправлен в канал!",
+            c.message.chat.id,
+            c.message.message_id
+        )
+    except Exception as e:
+        bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
 
-async def main():
-    """Точка входа"""
-    manager = BotManager()
-    await manager.run()
+@bot.callback_query_handler(func=lambda c: c.data == 'admin_cancel')
+def admin_cancel(c):
+    bot.delete_message(c.message.chat.id, c.message.message_id)
+    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=admin_menu())
 
-if __name__ == "__main__":
-    asyncio.run(main())
+@bot.message_handler(func=lambda m: m.text == '📊 Статистика')
+def admin_stats(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    c.execute("SELECT free_count, paid_count FROM stats LIMIT 1")
+    row = c.fetchone()
+    
+    if row:
+        free_count, paid_count = row
+        text = (
+            "📊 СТАТИСТИКА\n\n"
+            f"🧠 Бесплатных: {free_count}\n"
+            f"💎 Платных: {paid_count}\n\n"
+            f"Всего: {free_count + paid_count}"
+        )
+    else:
+        text = "📊 Статистика пуста."
+    
+    bot.send_message(message.chat.id, text)
+
+# ============================================
+# ЕЖЕДНЕВНЫЙ ТЕСТ
+# ============================================
+def post_daily_test():
+    topics = list(TEST_TOPICS.keys())
+    random.shuffle(topics)
+    topic = topics[0]
+    
+    questions = generate_test_questions(topic, 10)
+    if questions:
+        c.execute(
+            "INSERT INTO daily_tests (topic, questions, created_at) VALUES (?,?,?)",
+            (topic, json.dumps(questions), datetime.now().isoformat())
+        )
+        conn.commit()
+        test_id = c.lastrowid
+        
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton(
+            "🎯 Пройти тест",
+            url=f"https://t.me/{bot.get_me().username}?start=daily_{topic}_{test_id}"
+        ))
+        
+        bot.send_message(
+            CHANNEL_ID,
+            f"🧠 ЕЖЕДНЕВНЫЙ ТЕСТ ДНЯ!\n\n"
+            f"📌 Тема: {topic.title()}\n"
+            f"📊 Вопросов: 10\n\n"
+            f"Проверьте себя прямо сейчас!",
+            reply_markup=mk
+        )
+
+# ============================================
+# АДМИН-КОМАНДЫ
+# ============================================
+@bot.message_handler(commands=['daily'])
+def cmd_daily(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    bot.send_message(message.chat.id, "📤 Отправка ежедневного теста...")
+    post_daily_test()
+    bot.send_message(message.chat.id, "✅ Готово!")
+
+@bot.message_handler(commands=['post'])
+def cmd_post(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 30 секунд.")
+    text = generate_post()
+    if not text:
+        bot.send_message(message.chat.id, "❌ Не удалось сгенерировать пост.")
+        return
+    
+    bot.send_message(CHANNEL_ID, text)
+    bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
+
+# ============================================
+# ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА)
+# ============================================
+scheduler = BackgroundScheduler()
+
+def schedule_morning():
+    text = generate_post()
+    if text:
+        bot.send_message(CHANNEL_ID, text)
+        logger.info("✅ Пост 10:00 отправлен")
+
+def schedule_daily():
+    post_daily_test()
+    logger.info("✅ Тест 13:00 отправлен")
+
+def schedule_evening():
+    text = generate_post()
+    if text:
+        bot.send_message(CHANNEL_ID, text)
+        logger.info("✅ Пост 17:00 отправлен")
+
+scheduler.add_job(schedule_morning, 'cron', hour=10, minute=0)
+scheduler.add_job(schedule_daily, 'cron', hour=13, minute=0)
+scheduler.add_job(schedule_evening, 'cron', hour=17, minute=0)
+scheduler.start()
+logger.info("✅ Планировщик запущен (10:00, 13:00, 17:00)")
+
+# ============================================
+# ЗАПУСК
+# ============================================
+if __name__ == '__main__':
+    logger.info("🚀 БОТ ЗАПУЩЕН")
+    logger.info("✅ Готов к работе!")
+    bot.polling(none_stop=True)
