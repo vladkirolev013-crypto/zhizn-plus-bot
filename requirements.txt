@@ -2,4 +2,6 @@ pyTelegramBotAPI
 requests
 flask
 apscheduler
+pytz
+urllib3
 Pillow
