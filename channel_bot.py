@@ -25,11 +25,11 @@ BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
-# ⚠️ Authorization key (уже в Base64) - НЕ КОДИРУЕМ!
+# ⚠️ AUTH_KEY ЖЁСТКО ВШИТ В КОД (не зависит от Render)
 AUTH_KEY = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjg2YzE3MTRiLTc0NzYtNDhiYS05YjZiLTk5MGRhZmFiYWNjOQ=="
 
 # Версия бота
-BOT_VERSION = "8.0.0"
+BOT_VERSION = "9.0.0"
 BOT_NAME = "Жизнь+ Трансформационный Бот"
 
 # Пути
@@ -167,6 +167,7 @@ def get_giga_token():
             )
             
             logger.info(f"📡 Статус: {response.status_code}")
+            logger.info(f"📄 Ответ: {response.text[:200]}")
             
             if response.status_code == 200:
                 data = response.json()
@@ -179,7 +180,8 @@ def get_giga_token():
                 else:
                     logger.error("❌ Токен не найден в ответе")
             else:
-                logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
+                logger.error(f"❌ Ошибка: {response.status_code}")
+                logger.error(f"📄 Текст ответа: {response.text[:300]}")
             
             time.sleep(2)
         except Exception as e:
