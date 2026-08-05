@@ -24,22 +24,19 @@ CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
 # ============================================
-# 5 НОВЫХ БЕСПЛАТНЫХ API (ОБНОВЛЕННЫЕ)
+# ТОЛЬКО РАБОЧИЕ API
 # ============================================
 
 AI_PROXIES = [
-    {"name": "GPT4Free", "url": "https://gpt4free.space", "model": "gpt-4o-mini"},
-    {"name": "Naga", "url": "https://api.naga.ac", "model": "gpt-3.5-turbo"},
-    {"name": "Venus", "url": "https://api.venus.ai", "model": "gpt-3.5-turbo"},
-    {"name": "Morpheus", "url": "https://api.morpheus.ai", "model": "gpt-3.5-turbo"},
-    {"name": "Flux", "url": "https://api.flux.ai", "model": "gpt-3.5-turbo"}
+    {"name": "G4F", "url": "https://api.g4f.icu", "model": "gpt-4o-mini"},
+    {"name": "G4F-backup", "url": "https://g4f.space", "model": "gpt-4o-mini"},
 ]
 
 # ============================================
 # ВЕРСИЯ
 # ============================================
 
-BOT_VERSION = "12.0.0"
+BOT_VERSION = "13.0.0"
 BOT_NAME = "Жизнь+ AI"
 
 DB_PATH = 'channel.db'
@@ -99,11 +96,11 @@ for i in range(3):
     time.sleep(2)
 
 # ============================================
-# AI С АВТОМАТИЧЕСКИМ ПЕРЕКЛЮЧЕНИЕМ
+# AI (ТОЛЬКО РАБОЧИЙ API)
 # ============================================
 
 def ask_ai(system, user, max_tokens=4000, retries=2):
-    """Запрос к AI с автоматическим переключением между 5 API"""
+    """Запрос к AI через рабочий API"""
     
     logger.info("="*80)
     logger.info("📤 ЗАПРОС К AI")
@@ -127,7 +124,8 @@ def ask_ai(system, user, max_tokens=4000, retries=2):
                     "model": proxy["model"],
                     "messages": messages,
                     "max_tokens": max_tokens,
-                    "temperature": 0.95
+                    "temperature": 0.95,
+                    "stream": False
                 }
                 
                 start_time = time.time()
@@ -135,8 +133,9 @@ def ask_ai(system, user, max_tokens=4000, retries=2):
                 response = requests.post(
                     f"{proxy['url']}/v1/chat/completions",
                     json=payload,
-                    timeout=30,
-                    verify=False
+                    timeout=60,
+                    verify=False,
+                    headers={"Content-Type": "application/json"}
                 )
                 
                 elapsed = time.time() - start_time
@@ -144,24 +143,33 @@ def ask_ai(system, user, max_tokens=4000, retries=2):
                 logger.info(f"📡 Статус: {response.status_code}")
                 
                 if response.status_code == 200:
-                    result = response.json()
-                    content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-                    if content and len(content) > 10:
-                        logger.info(f"✅ ОТВЕТ ОТ {proxy['name']} ({len(content)} символов)")
-                        return content
-                    else:
-                        logger.warning(f"⚠️ Пустой ответ от {proxy['name']}")
+                    try:
+                        result = response.json()
+                        content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                        if content and len(content) > 10:
+                            logger.info(f"✅ ОТВЕТ ОТ {proxy['name']} ({len(content)} символов)")
+                            return content
+                        else:
+                            logger.warning(f"⚠️ Пустой ответ от {proxy['name']}")
+                    except:
+                        logger.warning(f"⚠️ Ошибка парсинга JSON от {proxy['name']}")
                 else:
                     logger.warning(f"⚠️ Ошибка {proxy['name']}: {response.status_code}")
+                    try:
+                        logger.debug(f"📄 Текст: {response.text[:200]}")
+                    except:
+                        pass
                 
                 time.sleep(1)
+            except requests.exceptions.Timeout:
+                logger.warning(f"⚠️ Таймаут {proxy['name']}")
             except Exception as e:
                 logger.warning(f"⚠️ Ошибка {proxy['name']}: {e}")
                 time.sleep(1)
         
         logger.info(f"⏳ {proxy['name']} не ответил, переключаюсь...")
     
-    logger.error("❌ НИ ОДИН ИЗ 5 API НЕ ОТВЕТИЛ")
+    logger.error("❌ НИ ОДИН API НЕ ОТВЕТИЛ")
     return None
 
 # ============================================
