@@ -15,14 +15,11 @@ from apscheduler.triggers.cron import CronTrigger
 from flask import Flask
 import urllib3
 
-# НЕ ИСПОЛЬЗУЕМ pytz — используем встроенный timezone
+# ПЫТАЕМСЯ ИСПОЛЬЗОВАТЬ ZONEINFO, ЕСЛИ НЕТ — FALLBACK
 try:
     from zoneinfo import ZoneInfo
-    TZ = ZoneInfo('Asia/Novokuznetsk')
 except ImportError:
-    # fallback для старых версий Python
     import pytz
-    TZ = pytz.timezone('Asia/Novokuznetsk')
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -43,18 +40,34 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# АНТИДОД 409
+# ЖЁСТКОЕ УДАЛЕНИЕ ВЕБХУКА
 # ============================================
 def kill_webhook():
+    """Полностью убивает вебхук через прямое API-обращение"""
     try:
+        # 1. Удаляем вебхук
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
         response = requests.post(url, json={"drop_pending_updates": True})
         logger.info(f"🧹 Удаление вебхука: {response.text}")
-        return response.json().get('ok', False)
+        
+        # 2. Принудительно проверяем, что вебхук удалён
+        time.sleep(3)
+        check_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+        check = requests.get(check_url)
+        logger.info(f"🔍 Статус вебхука: {check.text}")
+        
+        # 3. Если вебхук всё ещё висит — пытаемся сбросить принудительно
+        if '"url":""' not in check.text and '"url":null' not in check.text:
+            logger.warning("⚠️ Вебхук не удалился, пробую ещё раз...")
+            requests.post(url, json={"drop_pending_updates": True})
+            time.sleep(2)
+        
+        return True
     except Exception as e:
         logger.error(f"❌ Ошибка удаления вебхука: {e}")
         return False
 
+# ВЫЗЫВАЕМ ОЧИСТКУ ПРИ СТАРТЕ
 kill_webhook()
 time.sleep(2)
 
@@ -309,14 +322,8 @@ def home():
 def health():
     return {"status": "ok"}
 
-def run_flask():
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-
-threading.Thread(target=run_flask, daemon=True).start()
-
 # ============================================
-# МЕНЮ (АДМИН-ПАНЕЛЬ ВИДНА ТОЛЬКО ТЕБЕ)
+# МЕНЮ
 # ============================================
 def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -740,14 +747,19 @@ def cmd_post(message):
 # ============================================
 # ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА)
 # ============================================
-# Используем встроенный timezone (без pytz)
+# ПЫТАЕМСЯ УСТАНОВИТЬ ЧАСОВОЙ ПОЯС
 try:
     from zoneinfo import ZoneInfo
-    TZ = ZoneInfo('Asia/Novokuznetsk')
-    scheduler = BackgroundScheduler(timezone=TZ)
-except Exception as e:
-    logger.warning(f"⚠️ ZoneInfo не работает, используем UTC: {e}")
-    scheduler = BackgroundScheduler()
+    scheduler = BackgroundScheduler(timezone=ZoneInfo('Asia/Novokuznetsk'))
+    logger.info("✅ Используем zoneinfo (Python 3.9+)")
+except:
+    try:
+        import pytz
+        scheduler = BackgroundScheduler(timezone=pytz.timezone('Asia/Novokuznetsk'))
+        logger.info("✅ Используем pytz")
+    except:
+        scheduler = BackgroundScheduler()
+        logger.warning("⚠️ Часовой пояс не установлен, используется UTC")
 
 def schedule_morning():
     logger.info("⏳ Запуск утреннего поста 10:00...")
