@@ -23,21 +23,17 @@ BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
-# ============================================
-# ТОЛЬКО РАБОЧИЕ API
-# ============================================
+# ⚠️ ТВОЙ КЛЮЧ OPENROUTER (ВСТАВЛЕН):
+OPENROUTER_API_KEY = "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"
 
-AI_PROXIES = [
-    {"name": "G4F", "url": "https://api.g4f.icu", "model": "gpt-4o-mini"},
-    {"name": "G4F-backup", "url": "https://g4f.space", "model": "gpt-4o-mini"},
-]
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # ============================================
 # ВЕРСИЯ
 # ============================================
 
-BOT_VERSION = "13.0.0"
-BOT_NAME = "Жизнь+ AI"
+BOT_VERSION = "15.0.0"
+BOT_NAME = "Жизнь+ OpenRouter"
 
 DB_PATH = 'channel.db'
 LOG_PATH = 'bot_logs.txt'
@@ -96,32 +92,48 @@ for i in range(3):
     time.sleep(2)
 
 # ============================================
-# AI (ТОЛЬКО РАБОЧИЙ API)
+# OPENROUTER API
 # ============================================
 
-def ask_ai(system, user, max_tokens=4000, retries=2):
-    """Запрос к AI через рабочий API"""
+def ask_openrouter(system, user, max_tokens=4000, retries=2):
+    """Запрос к OpenRouter с автоматическим выбором бесплатной модели"""
     
     logger.info("="*80)
-    logger.info("📤 ЗАПРОС К AI")
+    logger.info("📤 ЗАПРОС К OPENROUTER")
     logger.info(f"📝 Система: {system[:100]}...")
     logger.info(f"📝 Запрос: {user[:100]}...")
     
     if not user or len(user.strip()) == 0:
         user = "Сделай запрос."
     
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://t.me/zhizn_plus",
+        "X-Title": "Zhizn+ Bot"
+    }
+    
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user}
     ]
     
-    for proxy in AI_PROXIES:
+    # БЕСПЛАТНЫЕ МОДЕЛИ (ПЕРЕБИРАЕТ, ЕСЛИ ОДНА НЕ РАБОТАЕТ)
+    models = [
+        "openrouter/free",  # АВТОМАТИЧЕСКИЙ ВЫБОР ЛУЧШЕЙ
+        "deepseek/deepseek-v4-flash:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemma-4-31b-it:free"
+    ]
+    
+    for model in models:
         for attempt in range(retries):
             try:
-                logger.info(f"🔄 Прокси: {proxy['name']}, попытка {attempt+1}")
+                logger.info(f"🔄 Модель: {model}, попытка {attempt+1}/{retries}")
                 
                 payload = {
-                    "model": proxy["model"],
+                    "model": model,
                     "messages": messages,
                     "max_tokens": max_tokens,
                     "temperature": 0.95,
@@ -129,47 +141,49 @@ def ask_ai(system, user, max_tokens=4000, retries=2):
                 }
                 
                 start_time = time.time()
-                
                 response = requests.post(
-                    f"{proxy['url']}/v1/chat/completions",
+                    OPENROUTER_URL,
+                    headers=headers,
                     json=payload,
                     timeout=60,
-                    verify=False,
-                    headers={"Content-Type": "application/json"}
+                    verify=False
                 )
                 
                 elapsed = time.time() - start_time
                 logger.info(f"⏱ Ответ за {elapsed:.2f} сек")
                 logger.info(f"📡 Статус: {response.status_code}")
                 
+                if elapsed < 35:
+                    wait_time = 35 - elapsed
+                    logger.info(f"⏳ ОЖИДАНИЕ {wait_time:.1f} СЕКУНД")
+                    time.sleep(wait_time)
+                
                 if response.status_code == 200:
                     try:
                         result = response.json()
                         content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
                         if content and len(content) > 10:
-                            logger.info(f"✅ ОТВЕТ ОТ {proxy['name']} ({len(content)} символов)")
+                            logger.info(f"✅ ОТВЕТ ОТ {model} ({len(content)} символов)")
                             return content
                         else:
-                            logger.warning(f"⚠️ Пустой ответ от {proxy['name']}")
-                    except:
-                        logger.warning(f"⚠️ Ошибка парсинга JSON от {proxy['name']}")
+                            logger.warning(f"⚠️ Пустой ответ от {model}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Ошибка парсинга: {e}")
                 else:
-                    logger.warning(f"⚠️ Ошибка {proxy['name']}: {response.status_code}")
+                    logger.warning(f"⚠️ Ошибка {model}: {response.status_code}")
                     try:
                         logger.debug(f"📄 Текст: {response.text[:200]}")
                     except:
                         pass
                 
                 time.sleep(1)
-            except requests.exceptions.Timeout:
-                logger.warning(f"⚠️ Таймаут {proxy['name']}")
             except Exception as e:
-                logger.warning(f"⚠️ Ошибка {proxy['name']}: {e}")
+                logger.warning(f"⚠️ Ошибка {model}: {e}")
                 time.sleep(1)
         
-        logger.info(f"⏳ {proxy['name']} не ответил, переключаюсь...")
+        logger.info(f"⏳ {model} не ответил, переключаюсь...")
     
-    logger.error("❌ НИ ОДИН API НЕ ОТВЕТИЛ")
+    logger.error("❌ НИ ОДНА МОДЕЛЬ НЕ ОТВЕТИЛА")
     return None
 
 # ============================================
@@ -343,7 +357,7 @@ def generate_post():
     system = """Ты — автор канала о психологии. Напиши пост на тему.
     Минимум 800 символов. Пиши глубоко, честно, без пафоса."""
     user = f"Тема: {theme}. Пост 800+ символов."
-    response = ask_ai(system, user, 4000)
+    response = ask_openrouter(system, user, 4000)
     if response and len(response) >= 800:
         return response, theme
     return None, theme
@@ -357,7 +371,7 @@ def generate_test_questions(topic, count=10):
     Верни ТОЛЬКО JSON.
     Формат: [{{"question": "текст?", "options": {{"A": "вар1", "B": "вар2", "C": "вар3", "D": "вар4"}}, "scores": {{"A": 0, "B": 1, "C": 2, "D": 3}}}}]"""
     
-    response = ask_ai(system, "", 4000)
+    response = ask_openrouter(system, "", 4000)
     if not response:
         return None
     
@@ -388,7 +402,7 @@ def generate_analysis(topic, answers, score, total, is_paid):
         system = """Ты — психолог. Дай краткий анализ. Назови главную проблему, дай 1 инсайт."""
         user = f"Тема: {topic}\nОтветы: {answers}\nБаллы: {score} из {total}"
     
-    return ask_ai(system, user, 4000 if is_paid else 2500)
+    return ask_openrouter(system, user, 4000 if is_paid else 2500)
 
 # ============================================
 # TELEGRAM БОТ
@@ -549,7 +563,7 @@ def topic_callback(c):
         questions = generate_test_questions(topic, count)
         
         if not questions:
-            bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.")
+            bot.send_message(chat_id, "❌ OpenRouter не ответил. Попробуй позже.")
             return
         
         sessions[chat_id] = {
@@ -651,7 +665,7 @@ def finish_test(chat_id):
         if analysis:
             bot.send_message(chat_id, f"🔍 АНАЛИЗ\n\n{analysis}", reply_markup=get_main_menu(chat_id))
         else:
-            bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
+            bot.send_message(chat_id, "❌ OpenRouter не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
         
         if chat_id in sessions:
             del sessions[chat_id]
@@ -685,7 +699,7 @@ def admin_post(message):
         post, theme = generate_post()
         
         if not post:
-            bot.send_message(message.chat.id, "❌ AI не ответил. Проверь логи.", reply_markup=admin_menu())
+            bot.send_message(message.chat.id, "❌ OpenRouter не ответил. Проверь логи.", reply_markup=admin_menu())
             return
         
         try:
@@ -714,7 +728,7 @@ def admin_post_with_image(message):
         post, theme = generate_post()
         
         if not post:
-            bot.send_message(message.chat.id, "❌ AI не ответил. Проверь логи.", reply_markup=admin_menu())
+            bot.send_message(message.chat.id, "❌ OpenRouter не ответил. Проверь логи.", reply_markup=admin_menu())
             return
         
         image_path = generate_post_image(theme)
@@ -755,7 +769,7 @@ def admin_test_to_channel(message):
         questions = generate_test_questions(topic, 10)
         
         if not questions:
-            bot.send_message(message.chat.id, "❌ AI не ответил. Проверь логи.", reply_markup=admin_menu())
+            bot.send_message(message.chat.id, "❌ OpenRouter не ответил. Проверь логи.", reply_markup=admin_menu())
             return
         
         image_path = generate_test_image(topic)
