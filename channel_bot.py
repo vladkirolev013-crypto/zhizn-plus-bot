@@ -27,39 +27,48 @@ ADMIN_IDS = [8746212340]
 GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
 GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjljMmUzNTI3LWI3NzAtNDU0NS1iMTFmLTBiZDljNDMxNWU1Mw=="
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# ============================================
+# МАКСИМАЛЬНОЕ ЛОГИРОВАНИЕ
+# ============================================
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # ============================================
-# СУПЕР-УБИЙЦА 409 (20 СПОСОБОВ)
+# СУПЕР-УБИЙЦА 409 (25 СПОСОБОВ)
 # ============================================
 
 def super_kill_409():
     try:
-        # 1-10: Многократное удаление вебхука
-        for i in range(20):
+        # 1-15: Многократное удаление вебхука
+        for i in range(25):
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
             requests.post(url, json={"drop_pending_updates": True}, timeout=10)
             time.sleep(0.2)
         
-        # 11: Сброс вебхука
+        # 16: Сброс вебхука
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
         requests.post(url, json={"url": "", "drop_pending_updates": True}, timeout=10)
         
-        # 12: Через GET
+        # 17: Через GET
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", params={"drop_pending_updates": "true"})
         
-        # 13-17: Удаление всех возможных файлов
+        # 18-22: Удаление всех файлов
         patterns = ['update-offset-*.json', '*.lock', '*.session', '*.state', '*.pid', '*.offset', '*.cache', '*.tmp']
         for pattern in patterns:
             for f in glob.glob(pattern):
                 try:
                     os.remove(f)
-                    logger.info(f"Удален файл: {f}")
                 except:
                     pass
         
-        # 18: Очистка временной папки
+        # 23: Очистка временной папки
         temp_files = glob.glob('/tmp/*.json') + glob.glob('/tmp/*.lock')
         for f in temp_files:
             try:
@@ -67,15 +76,15 @@ def super_kill_409():
             except:
                 pass
         
-        # 19: Проверка статуса
+        # 24: Проверка статуса
         response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo", timeout=10)
         logger.info(f"Вебхук статус: {response.json()}")
         
-        # 20: Еще один проход для надежности
+        # 25: Еще один проход
         time.sleep(1)
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", json={"drop_pending_updates": True}, timeout=10)
         
-        logger.info("🔥 409 УНИЧТОЖЕН НАВСЕГДА (20 способов)")
+        logger.info("🔥 409 УНИЧТОЖЕН НАВСЕГДА (25 способов)")
         return True
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -90,17 +99,22 @@ super_kill_409()
 time.sleep(2)
 
 # ============================================
-# GIGACHAT (МАКСИМАЛЬНАЯ МОЩЬ)
+# GIGACHAT (С ДЕТАЛЬНЫМ ЛОГИРОВАНИЕМ)
 # ============================================
 
 giga_token_cache = {"token": None, "expires": 0}
 
 def get_giga_token():
+    logger.info("🔑 НАЧАЛО ПОЛУЧЕНИЯ ТОКЕНА")
+    
     if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
+        logger.info("✅ Токен из кэша (ещё действителен)")
         return giga_token_cache["token"]
     
-    for attempt in range(5):
+    for attempt in range(1, 6):
         try:
+            logger.info(f"🔄 Попытка {attempt}/6 получить токен...")
+            
             auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
             auth_b64 = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
             
@@ -109,7 +123,7 @@ def get_giga_token():
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
             
-            logger.info(f"🔄 Получение токена (попытка {attempt+1}/5)...")
+            logger.info(f"📤 Отправка запроса на https://ngw.devices.sberbank.ru:9443/api/v2/oauth")
             
             response = requests.post(
                 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
@@ -119,30 +133,41 @@ def get_giga_token():
                 verify=False
             )
             
+            logger.info(f"📡 Статус ответа: {response.status_code}")
+            
             if response.status_code == 200:
                 data = response.json()
                 token = data.get('access_token')
                 if token:
                     giga_token_cache["token"] = token
                     giga_token_cache["expires"] = time.time() + 3500
-                    logger.info("✅ Токен получен")
+                    logger.info("✅ ТОКЕН ПОЛУЧЕН УСПЕШНО!")
                     return token
+                else:
+                    logger.error("❌ Токен не найден в ответе")
             else:
-                logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
+                logger.error(f"❌ Ошибка HTTP {response.status_code}: {response.text[:200]}")
             
             time.sleep(2)
         except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
+            logger.error(f"❌ Исключение при получении токена: {e}")
             time.sleep(2)
     
-    logger.error("❌ НЕ УДАЛОСЬ ПОЛУЧИТЬ ТОКЕН")
+    logger.error("❌ НЕ УДАЛОСЬ ПОЛУЧИТЬ ТОКЕН ПОСЛЕ 6 ПОПЫТОК")
     return None
 
 def ask_giga(system, user, max_tokens=5000):
+    logger.info("="*80)
+    logger.info("📤 НАЧАЛО ЗАПРОСА К GIGACHAT")
+    logger.info(f"📝 Системный промпт: {system[:150]}...")
+    logger.info(f"📝 Пользовательский запрос: {user[:150]}...")
+    
     token = get_giga_token()
     if not token:
-        logger.error("❌ Нет токена")
+        logger.error("❌ НЕТ ТОКЕНА — ЗАПРОС ОТМЕНЁН")
         return None
+    
+    logger.info("🔑 Токен получен, формирую запрос...")
     
     headers = {
         'Authorization': f'Bearer {token}',
@@ -159,10 +184,15 @@ def ask_giga(system, user, max_tokens=5000):
         "max_tokens": max_tokens
     }
     
-    for attempt in range(3):
+    logger.info(f"📦 Размер запроса: {len(json.dumps(payload))} байт")
+    logger.info(f"🌐 URL: https://gigachat.devices.sberbank.ru/api/v1/chat/completions")
+    
+    for attempt in range(1, 4):
         try:
+            logger.info(f"🔄 Попытка {attempt}/4 отправить запрос...")
+            
             start_time = time.time()
-            logger.info(f"📤 Запрос к GigaChat (попытка {attempt+1}/3)...")
+            logger.info("⏳ Отправка...")
             
             response = requests.post(
                 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
@@ -173,38 +203,42 @@ def ask_giga(system, user, max_tokens=5000):
             )
             
             elapsed = time.time() - start_time
-            logger.info(f"⏱ Ответ за {elapsed:.1f} сек")
+            logger.info(f"⏱ Ответ получен за {elapsed:.2f} секунд")
+            logger.info(f"📡 HTTP Статус: {response.status_code}")
             
-            # ГАРАНТИРОВАННОЕ ОЖИДАНИЕ 35 СЕКУНД
             if elapsed < 35:
                 wait_time = 35 - elapsed
-                logger.info(f"⏳ Ожидание {wait_time:.1f} сек (гарантия генерации)")
+                logger.info(f"⏳ Ожидание {wait_time:.2f} сек (гарантия 35 сек)")
                 time.sleep(wait_time)
             
             if response.status_code == 200:
                 result = response.json()
-                content = result['choices'][0]['message']['content']
+                content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                logger.info(f"📄 Длина ответа: {len(content)} символов")
+                logger.info(f"📄 Первые 150 символов: {content[:150]}...")
+                
                 if content and len(content) > 50:
-                    logger.info(f"✅ Ответ получен ({len(content)} символов)")
+                    logger.info("✅ ЗАПРОС УСПЕШНО ВЫПОЛНЕН!")
                     return content
                 else:
-                    logger.error("❌ Пустой ответ")
+                    logger.error("❌ Ответ пустой или слишком короткий")
             else:
-                logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:300]}")
+                logger.error(f"❌ ОШИБКА HTTP {response.status_code}")
+                logger.error(f"📄 Текст ошибки: {response.text[:300]}")
             
             time.sleep(2)
         except requests.exceptions.Timeout:
-            logger.error("❌ Таймаут 90 сек")
+            logger.error("❌ ТАЙМАУТ (90 секунд)")
             time.sleep(2)
         except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
+            logger.error(f"❌ ИСКЛЮЧЕНИЕ: {e}")
             time.sleep(2)
     
-    logger.error("❌ НЕ УДАЛОСЬ ПОЛУЧИТЬ ОТВЕТ")
+    logger.error("❌ НЕ УДАЛОСЬ ПОЛУЧИТЬ ОТВЕТ ПОСЛЕ 4 ПОПЫТОК")
     return None
 
 # ============================================
-# ГЕНЕРАЦИЯ КАРТИНОК (МАКСИМАЛЬНАЯ МОЩЬ)
+# ГЕНЕРАЦИЯ КАРТИНОК (3 API + ПОВТОРНЫЕ ПОПЫТКИ)
 # ============================================
 
 def generate_image(prompt, width=1024, height=768):
@@ -213,7 +247,6 @@ def generate_image(prompt, width=1024, height=768):
     clean_prompt = prompt[:200].replace(' ', '%20').replace('"', '').replace("'", "").replace(',', '%2C')
     full_prompt = f"{clean_prompt}, high quality, detailed, beautiful, professional, 4k, masterpiece"
     
-    # СПИСОК API (если один не работает - пробуем другой)
     apis = [
         f"https://image.pollinations.ai/prompt/{full_prompt}?width={width}&height={height}&nologo=true&seed={random.randint(1,999999)}",
         f"https://pollinations.ai/prompt/{full_prompt}?width={width}&height={height}",
@@ -264,7 +297,7 @@ def generate_test_image(topic):
     return generate_image(random.choice(prompts))
 
 # ============================================
-# БАЗА ДАННЫХ (МАКСИМАЛЬНАЯ)
+# БАЗА ДАННЫХ (РАСШИРЕННАЯ)
 # ============================================
 
 DB_PATH = 'channel.db'
@@ -290,11 +323,13 @@ c.execute('''CREATE TABLE IF NOT EXISTS stats
               users_count INTEGER DEFAULT 0,
               posts_count INTEGER DEFAULT 0,
               tests_created INTEGER DEFAULT 0,
-              images_generated INTEGER DEFAULT 0)''')
+              images_generated INTEGER DEFAULT 0,
+              giga_requests INTEGER DEFAULT 0,
+              giga_errors INTEGER DEFAULT 0)''')
 
 c.execute("SELECT COUNT(*) FROM stats")
 if c.fetchone()[0] == 0:
-    c.execute("INSERT INTO stats (free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated) VALUES (0, 0, 0, 0, 0, 0, 0)")
+    c.execute("INSERT INTO stats (free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated, giga_requests, giga_errors) VALUES (0, 0, 0, 0, 0, 0, 0, 0, 0)")
 
 # Таблица сессий
 c.execute('''CREATE TABLE IF NOT EXISTS user_sessions 
@@ -458,22 +493,18 @@ TEST_TOPICS = {
 def get_unique_theme():
     """Получает уникальную тему для поста (без повторов)"""
     
-    # Получаем использованные темы
     c.execute("SELECT topic FROM used_topics ORDER BY used_at DESC LIMIT 50")
     used = [row[0] for row in c.fetchall()]
     
-    # Ищем тему, которой нет в использованных
     available = [t for t in POST_THEMES if t not in used]
     
     if available:
         theme = random.choice(available)
     else:
-        # Если все темы использованы - очищаем историю
         c.execute("DELETE FROM used_topics")
         conn.commit()
         theme = random.choice(POST_THEMES)
     
-    # Сохраняем тему
     try:
         c.execute("INSERT INTO used_topics (topic) VALUES (?)", (theme,))
         conn.commit()
@@ -489,7 +520,11 @@ def get_unique_theme():
 def generate_post():
     """Генерация поста длиной 800+ символов только через GigaChat"""
     
+    logger.info("="*80)
+    logger.info("📝 ГЕНЕРАЦИЯ ПОСТА")
+    
     theme = get_unique_theme()
+    logger.info(f"📌 Тема: {theme}")
     
     system = """ТЫ - АВТОР КАНАЛА О ПСИХОЛОГИИ И САМОРАЗВИТИИ.
     
@@ -536,7 +571,6 @@ def generate_post():
     
     if response and len(response) >= 600:
         logger.warning(f"⚠️ Пост короткий ({len(response)} символов), пробуем еще раз...")
-        # Пробуем еще раз с усиленным требованием
         response2 = ask_giga(
             system + "\n\nВАЖНО: НАПИШИ МИНИМУМ 800 СИМВОЛОВ! РАСКРОЙ ТЕМУ ГЛУБЖЕ! ДОБАВЬ БОЛЬШЕ СОДЕРЖАНИЯ!",
             user,
@@ -554,6 +588,9 @@ def generate_post():
 
 def generate_test_questions(topic, count=10):
     """Генерация теста только через GigaChat"""
+    
+    logger.info("="*80)
+    logger.info(f"🧠 ГЕНЕРАЦИЯ ТЕСТА: {topic}, {count} вопросов")
     
     if count == 10:
         system = """ТЫ - ЭКСПЕРТ ПО ПСИХОЛОГИИ.
@@ -606,7 +643,6 @@ def generate_test_questions(topic, count=10):
     response = response.strip()
     logger.info(f"📥 Ответ GigaChat ({len(response)} символов)")
     
-    # Ищем JSON
     start = response.find('[')
     end = response.rfind(']') + 1
     
@@ -624,7 +660,6 @@ def generate_test_questions(topic, count=10):
             logger.error("❌ Пустой массив")
             return None
         
-        # Добавляем баллы если их нет
         for q in questions:
             if 'scores' not in q:
                 q['scores'] = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
@@ -645,6 +680,9 @@ def generate_test_questions(topic, count=10):
 
 def generate_analysis(topic, answers, score, total, is_paid):
     """Генерация анализа только через GigaChat"""
+    
+    logger.info("="*80)
+    logger.info(f"📊 ГЕНЕРАЦИЯ АНАЛИЗА")
     
     if not is_paid:
         system = """ТЫ - ОПЫТНЫЙ ПСИХОЛОГ-ДИАГНОСТ.
@@ -1026,12 +1064,15 @@ def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
+    logger.info("="*80)
+    logger.info("👑 АДМИН: ЗАПРОС НА СОЗДАНИЕ ПОСТА")
+    
     bot.send_message(message.chat.id, "📝 Генерация поста...\n⏱ До 35 секунд.")
     
     post, theme = generate_post()
     
     if not post:
-        bot.send_message(message.chat.id, "❌ GigaChat не ответил.")
+        bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи.", reply_markup=admin_menu())
         return
     
     try:
@@ -1065,7 +1106,7 @@ def admin_post_with_image(message):
     post, theme = generate_post()
     
     if not post:
-        bot.send_message(message.chat.id, "❌ GigaChat не ответил.")
+        bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи.", reply_markup=admin_menu())
         return
     
     bot.send_message(message.chat.id, "🖼 Создание картинки...")
@@ -1112,7 +1153,7 @@ def admin_test_to_channel(message):
     questions = generate_test_questions(topic, 10)
     
     if not questions:
-        bot.send_message(message.chat.id, "❌ GigaChat не ответил.")
+        bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи.", reply_markup=admin_menu())
         return
     
     bot.send_message(message.chat.id, "🖼 Создание картинки для теста...")
@@ -1166,7 +1207,7 @@ def admin_stats(message):
         return
     
     try:
-        c.execute("SELECT free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated FROM stats")
+        c.execute("SELECT free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated, giga_requests, giga_errors FROM stats")
         stats_row = c.fetchone()
         
         c.execute("SELECT COUNT(*) FROM daily_tests")
@@ -1190,7 +1231,9 @@ def admin_stats(message):
 💎 Платных тестов: {stats_row[1] if stats_row else 0}
 🎫 Промокодов: {stats_row[2] if stats_row else 0}
 🖼 Картинок создано: {stats_row[6] if stats_row else 0}
-📚 Уникальных тем использовано: {used_topics}"""
+📚 Уникальных тем использовано: {used_topics}
+📤 Запросов к GigaChat: {stats_row[7] if stats_row else 0}
+❌ Ошибок GigaChat: {stats_row[8] if stats_row else 0}"""
         
         bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
     except Exception as e:
