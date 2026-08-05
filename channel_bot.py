@@ -11,15 +11,8 @@ import base64
 import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from flask import Flask
+from flask import Flask, request
 import urllib3
-
-# ПЫТАЕМСЯ ИСПОЛЬЗОВАТЬ ZONEINFO, ЕСЛИ НЕТ — FALLBACK
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    import pytz
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -28,6 +21,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
+WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL', 'https://zhizn-plus-bot.onrender.com') + '/webhook'
+
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
 
@@ -38,38 +33,6 @@ if not BOT_TOKEN:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# ============================================
-# ЖЁСТКОЕ УДАЛЕНИЕ ВЕБХУКА
-# ============================================
-def kill_webhook():
-    """Полностью убивает вебхук через прямое API-обращение"""
-    try:
-        # 1. Удаляем вебхук
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        response = requests.post(url, json={"drop_pending_updates": True})
-        logger.info(f"🧹 Удаление вебхука: {response.text}")
-        
-        # 2. Принудительно проверяем, что вебхук удалён
-        time.sleep(3)
-        check_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
-        check = requests.get(check_url)
-        logger.info(f"🔍 Статус вебхука: {check.text}")
-        
-        # 3. Если вебхук всё ещё висит — пытаемся сбросить принудительно
-        if '"url":""' not in check.text and '"url":null' not in check.text:
-            logger.warning("⚠️ Вебхук не удалился, пробую ещё раз...")
-            requests.post(url, json={"drop_pending_updates": True})
-            time.sleep(2)
-        
-        return True
-    except Exception as e:
-        logger.error(f"❌ Ошибка удаления вебхука: {e}")
-        return False
-
-# ВЫЗЫВАЕМ ОЧИСТКУ ПРИ СТАРТЕ
-kill_webhook()
-time.sleep(2)
 
 # ============================================
 # GIGACHAT
@@ -112,7 +75,6 @@ def get_giga_token():
 def ask_giga(system, user, max_tokens=2500):
     token = get_giga_token()
     if not token:
-        logger.error("❌ Токен не получен")
         return None
     
     headers = {
@@ -131,46 +93,26 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
-        logger.info("📤 Отправляю запрос в GigaChat...")
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
             json=payload,
-            timeout=60,
+            timeout=30,
             verify=False
         )
         
-        logger.info(f"✅ GigaChat ответил: {response.status_code}")
-        
         if response.status_code != 200:
-            logger.error(f"❌ Текст ошибки: {response.text[:500]}")
+            logger.error(f"GigaChat ошибка: {response.status_code}")
             return None
         
-        result = response.json()
-        content = result['choices'][0]['message']['content']
-        return content
+        return response.json()['choices'][0]['message']['content']
         
-    except requests.exceptions.Timeout:
-        logger.error("❌ Таймаут GigaChat (60 секунд)")
-        return None
     except Exception as e:
-        logger.error(f"❌ Ошибка GigaChat: {e}")
+        logger.error(f"GigaChat ошибка: {e}")
         return None
-
-def ask_giga_with_wait(system, user, max_tokens=2500):
-    start_time = time.time()
-    result = ask_giga(system, user, max_tokens)
-    elapsed = time.time() - start_time
-    
-    if elapsed < 40:
-        wait_time = 40 - elapsed
-        logger.info(f"⏳ Ожидание {wait_time:.1f} секунд")
-        time.sleep(wait_time)
-    
-    return result
 
 # ============================================
-# TELEGRAM БОТ
+# TELEGRAM БОТ (ВЕБХУК)
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -233,7 +175,7 @@ def generate_test_questions(topic, count=10):
     ]
     Верни ТОЛЬКО JSON."""
     
-    response = ask_giga_with_wait(system, user, max_tokens=3000)
+    response = ask_giga(system, user, max_tokens=3000)
     if not response:
         return None
     
@@ -259,68 +201,57 @@ def generate_test_questions(topic, count=10):
         logger.error(f"Ошибка парсинга: {e}")
         return None
 
-# ============================================
-# ГЕНЕРАТОР АНАЛИЗА
-# ============================================
 def generate_analysis(topic, answers, score, total, is_paid):
     min_len = 1400 if is_paid else 700
     
     if is_paid:
-        system = """Ты — команда: клинический психолог (25 лет) и коуч мирового уровня.
-        Дай глубокий разбор личности и мощные рекомендации."""
+        system = """Ты — команда: клинический психолог (25 лет) и коуч мирового уровня."""
         user = f"""Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}.
-        Проведи разбор личности. Включи:
-        - Глубокий психологический портрет
-        - 2 инсайта
-        - Книги, упражнения, видео (на русском)
-        - Вызов от коуча
-        """
+        Проведи разбор личности. Включи: портрет, 2 инсайта, книги, упражнения, видео (на русском)."""
     else:
-        system = """Ты — лучший клинический психолог. Проведи глубокий разбор личности.
-        Без воды, без штампов. Дай 2 инсайта и 2 вопроса для размышления."""
+        system = """Ты — лучший клинический психолог. Проведи глубокий разбор личности."""
         user = f"""Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}.
-        Проведи глубокий разбор личности. БЕЗ книг и упражнений."""
+        Проведи глубокий разбор личности. Дай 2 инсайта и 2 вопроса для размышления."""
     
-    response = ask_giga_with_wait(system, user, max_tokens=3000 if is_paid else 2000)
+    response = ask_giga(system, user, max_tokens=3000 if is_paid else 2000)
     if not response or len(response) < min_len * 0.7:
         return None
     return response
 
-# ============================================
-# ГЕНЕРАТОР ПОСТА
-# ============================================
 def generate_post():
-    themes = [
-        "утренняя энергия", "внутренняя сила", "радость в простых вещах",
-        "преодоление страхов", "любовь к себе", "благодарность",
-        "мотивация", "осознанность", "отношения", "финансовое мышление"
-    ]
+    themes = ["утренняя энергия", "внутренняя сила", "радость в простых вещах", "преодоление страхов", "любовь к себе", "благодарность"]
     theme = random.choice(themes)
     
-    system = """Ты — психолог и коуч. Напиши пост для Telegram, который даёт энергию,
-    использует мягкое НЛП, не повторяется."""
+    system = """Ты — психолог и коуч. Напиши пост для Telegram, который даёт энергию, использует мягкое НЛП, не повторяется."""
+    user = f"""Напиши пост на тему "{theme}" для Telegram. Длина: 800–1000 знаков. Заголовок с эмодзи. Практический совет. Хештеги."""
     
-    user = f"""Напиши пост на тему "{theme}" для Telegram.
-    Длина: 800–1000 знаков. Заголовок с эмодзи. Практический совет.
-    Мотивирующая фраза. Хештеги."""
-    
-    response = ask_giga_with_wait(system, user, max_tokens=2000)
+    response = ask_giga(system, user, max_tokens=2000)
     if not response or len(response) < 700:
         return None
     return response
 
 # ============================================
-# ВЕБ-СЕРВЕР
+# FLASK ПРИЛОЖЕНИЕ (ВЕБХУК)
 # ============================================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "OK"
+    return "Бот Жизнь+ работает!"
 
 @app.route('/health')
 def health():
     return {"status": "ok"}
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    else:
+        return '', 403
 
 # ============================================
 # МЕНЮ
@@ -467,7 +398,7 @@ def topic_callback(c):
         is_paid = test_type == 'paid'
         
         bot.edit_message_text(
-            "⏳ Генерация теста...\nПодождите до 40 секунд.",
+            "⏳ Генерация теста...\nПодождите до 30 секунд.",
             c.message.chat.id,
             c.message.message_id
         )
@@ -501,6 +432,7 @@ def cancel_callback(c):
 def send_question(chat_id):
     s = sessions.get(chat_id)
     if not s:
+        bot.send_message(chat_id, "❌ Активный тест не найден. Начните новый через «🎯 Пройти тест».")
         return
     
     if s['q'] >= len(s['questions']):
@@ -523,9 +455,10 @@ def send_question(chat_id):
 
 @bot.message_handler(func=lambda m: m.text == '⏹ Прервать тест')
 def stop_test(message):
-    if message.chat.id in sessions:
-        del sessions[message.chat.id]
-    bot.send_message(message.chat.id, "⏹ Тест прерван", reply_markup=get_main_menu(message.chat.id))
+    chat_id = message.chat.id
+    if chat_id in sessions:
+        del sessions[chat_id]
+    bot.send_message(chat_id, "⏹ Тест прерван", reply_markup=get_main_menu(chat_id))
 
 @bot.message_handler(func=lambda m: m.text and m.text[0] in 'ABCD')
 def handle_answer(message):
@@ -565,7 +498,7 @@ def finish_test(chat_id):
         chat_id,
         f"📊 Тест завершен!\n\n"
         f"✅ Результат: {score} из {total}\n"
-        f"⏳ Генерация анализа...\nДо 40 секунд."
+        f"⏳ Генерация анализа...\nДо 30 секунд."
     )
     
     analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
@@ -591,7 +524,7 @@ def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 30 секунд.")
     text = generate_post()
     if not text:
         bot.send_message(message.chat.id, "❌ Не удалось сгенерировать пост.")
@@ -735,7 +668,7 @@ def cmd_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 30 секунд.")
     text = generate_post()
     if not text:
         bot.send_message(message.chat.id, "❌ Не удалось сгенерировать пост.")
@@ -747,52 +680,48 @@ def cmd_post(message):
 # ============================================
 # ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА)
 # ============================================
-# ПЫТАЕМСЯ УСТАНОВИТЬ ЧАСОВОЙ ПОЯС
-try:
-    from zoneinfo import ZoneInfo
-    scheduler = BackgroundScheduler(timezone=ZoneInfo('Asia/Novokuznetsk'))
-    logger.info("✅ Используем zoneinfo (Python 3.9+)")
-except:
-    try:
-        import pytz
-        scheduler = BackgroundScheduler(timezone=pytz.timezone('Asia/Novokuznetsk'))
-        logger.info("✅ Используем pytz")
-    except:
-        scheduler = BackgroundScheduler()
-        logger.warning("⚠️ Часовой пояс не установлен, используется UTC")
+scheduler = BackgroundScheduler()
 
 def schedule_morning():
-    logger.info("⏳ Запуск утреннего поста 10:00...")
     text = generate_post()
     if text:
         bot.send_message(CHANNEL_ID, text)
         logger.info("✅ Пост 10:00 отправлен")
-    else:
-        logger.error("❌ Пост 10:00 не отправлен")
 
 def schedule_daily():
-    logger.info("⏳ Запуск ежедневного теста 13:00...")
     post_daily_test()
+    logger.info("✅ Тест 13:00 отправлен")
 
 def schedule_evening():
-    logger.info("⏳ Запуск вечернего поста 17:00...")
     text = generate_post()
     if text:
         bot.send_message(CHANNEL_ID, text)
         logger.info("✅ Пост 17:00 отправлен")
-    else:
-        logger.error("❌ Пост 17:00 не отправлен")
 
 scheduler.add_job(schedule_morning, 'cron', hour=10, minute=0)
 scheduler.add_job(schedule_daily, 'cron', hour=13, minute=0)
 scheduler.add_job(schedule_evening, 'cron', hour=17, minute=0)
 scheduler.start()
-logger.info("✅ Планировщик запущен (10:00, 13:00, 17:00 по Юрге)")
 
 # ============================================
-# ЗАПУСК
+# ЗАПУСК (ВЕБХУК)
 # ============================================
 if __name__ == '__main__':
-    logger.info("🚀 БОТ ЗАПУЩЕН")
-    logger.info("✅ Готов к работе!")
-    bot.polling(none_stop=True)
+    # ПРИНУДИТЕЛЬНО УДАЛЯЕМ ВЕБХУК
+    try:
+        bot.delete_webhook()
+        logger.info("✅ Вебхук удалён")
+    except:
+        pass
+    
+    time.sleep(2)
+    
+    # УСТАНАВЛИВАЕМ НОВЫЙ ВЕБХУК
+    try:
+        bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"✅ Вебхук установлен: {WEBHOOK_URL}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка установки вебхука: {e}")
+    
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
