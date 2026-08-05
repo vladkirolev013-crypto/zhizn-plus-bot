@@ -6,8 +6,6 @@ import json
 import time
 import logging
 import threading
-import uuid
-import base64
 import random
 import glob
 import sys
@@ -25,20 +23,50 @@ BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
-# ⚠️ AUTH_KEY ЖЁСТКО ВШИТ В КОД (не зависит от Render)
-AUTH_KEY = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjg2YzE3MTRiLTc0NzYtNDhiYS05YjZiLTk5MGRhZmFiYWNjOQ=="
+# ============================================
+# 5 БЕСПЛАТНЫХ API (АВТОМАТИЧЕСКОЕ ПЕРЕКЛЮЧЕНИЕ)
+# ============================================
 
-# Версия бота
-BOT_VERSION = "9.0.0"
-BOT_NAME = "Жизнь+ Трансформационный Бот"
-
-# Пути
-DB_PATH = 'channel.db'
-LOG_PATH = 'bot_logs.txt'
-TEMP_IMAGE_PATH = '/tmp/'
+AI_PROXIES = [
+    {
+        "name": "G4F",
+        "url": "https://api.g4f.icu",
+        "model": "gpt-4o-mini"
+    },
+    {
+        "name": "Pawan",
+        "url": "https://api.pawan.krd",
+        "model": "gpt-3.5-turbo"
+    },
+    {
+        "name": "SHN",
+        "url": "https://chatgpt-api.shn.hk",
+        "model": "gpt-3.5-turbo"
+    },
+    {
+        "name": "REST",
+        "url": "https://rest.ai",
+        "model": "gpt-3.5-turbo"
+    },
+    {
+        "name": "DeepAI",
+        "url": "https://deepai.org",
+        "model": "gpt-3.5-turbo"
+    }
+]
 
 # ============================================
-# МАКСИМАЛЬНОЕ ЛОГИРОВАНИЕ
+# ВЕРСИЯ
+# ============================================
+
+BOT_VERSION = "11.0.0"
+BOT_NAME = "Жизнь+ AI"
+
+DB_PATH = 'channel.db'
+LOG_PATH = 'bot_logs.txt'
+
+# ============================================
+# ЛОГИРОВАНИЕ
 # ============================================
 
 logging.basicConfig(
@@ -53,249 +81,138 @@ logger = logging.getLogger(__name__)
 logger.info(f"🚀 ЗАПУСК {BOT_NAME} v{BOT_VERSION}")
 
 # ============================================
-# СУПЕР-УБИЙЦА 409 (30 СПОСОБОВ)
+# УБИЙЦА 409
 # ============================================
 
 def super_kill_409():
-    """Уничтожает 409 всеми способами"""
-    logger.info("🔥 НАЧАЛО УНИЧТОЖЕНИЯ 409")
-    success_count = 0
-    
     try:
         for i in range(15):
             try:
                 url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-                response = requests.post(url, json={"drop_pending_updates": True}, timeout=10)
-                if response.status_code == 200:
-                    success_count += 1
+                requests.post(url, json={"drop_pending_updates": True}, timeout=10)
                 time.sleep(0.2)
             except:
                 pass
         
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-            response = requests.post(url, json={"url": "", "drop_pending_updates": True}, timeout=10)
-            if response.status_code == 200:
-                success_count += 1
+            requests.post(url, json={"url": "", "drop_pending_updates": True}, timeout=10)
         except:
             pass
         
-        try:
-            requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", params={"drop_pending_updates": "true"})
-            success_count += 1
-        except:
-            pass
-        
-        patterns = ['update-offset-*.json', '*.lock', '*.session', '*.state', '*.pid', '*.offset', '*.cache', '*.tmp']
+        patterns = ['update-offset-*.json', '*.lock', '*.session', '*.state', '*.pid']
         for pattern in patterns:
-            try:
-                for f in glob.glob(pattern):
-                    try:
-                        os.remove(f)
-                        logger.info(f"Удален файл: {f}")
-                    except:
-                        pass
-            except:
-                pass
+            for f in glob.glob(pattern):
+                try:
+                    os.remove(f)
+                except:
+                    pass
         
-        temp_dirs = ['/tmp', '/var/tmp', '/dev/shm']
-        for temp_dir in temp_dirs:
-            try:
-                for f in glob.glob(f"{temp_dir}/telegram_*.json") + glob.glob(f"{temp_dir}/update-*.json"):
-                    try:
-                        os.remove(f)
-                    except:
-                        pass
-            except:
-                pass
-        
-        try:
-            response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo", timeout=10)
-            logger.info(f"Вебхук статус: {response.json()}")
-        except:
-            pass
-        
-        time.sleep(1)
-        try:
-            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", json={"drop_pending_updates": True}, timeout=10)
-            success_count += 1
-        except:
-            pass
-        
-        logger.info(f"🔥 409 УНИЧТОЖЕН! Успешных операций: {success_count}/30")
+        logger.info("🔥 409 УНИЧТОЖЕН")
         return True
     except Exception as e:
         logger.error(f"Ошибка: {e}")
         return False
 
-for i in range(5):
-    logger.info(f"🔄 Проход уничтожения 409 #{i+1}/5")
+for i in range(3):
     super_kill_409()
     time.sleep(2)
 
 # ============================================
-# GIGACHAT (С ОЖИДАНИЕМ 35 СЕКУНД)
+# AI С АВТОМАТИЧЕСКИМ ПЕРЕКЛЮЧЕНИЕМ
 # ============================================
 
-giga_token_cache = {"token": None, "expires": 0}
-
-def get_giga_token():
-    """Получение токена GigaChat"""
-    
-    logger.info("🔑 НАЧАЛО ПОЛУЧЕНИЯ ТОКЕНА")
-    
-    if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
-        logger.info("✅ Токен из кэша")
-        return giga_token_cache["token"]
-    
-    for attempt in range(1, 4):
-        try:
-            logger.info(f"🔄 Попытка {attempt}/3 получить токен...")
-            
-            auth_b64 = AUTH_KEY
-            headers = {
-                'Authorization': f'Basic {auth_b64}',
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-            
-            response = requests.post(
-                'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
-                headers=headers,
-                data='scope=GIGACHAT_API_PERS',
-                timeout=30,
-                verify=False
-            )
-            
-            logger.info(f"📡 Статус: {response.status_code}")
-            logger.info(f"📄 Ответ: {response.text[:200]}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                token = data.get('access_token')
-                if token:
-                    giga_token_cache["token"] = token
-                    giga_token_cache["expires"] = time.time() + 3500
-                    logger.info("✅ ТОКЕН ПОЛУЧЕН!")
-                    return token
-                else:
-                    logger.error("❌ Токен не найден в ответе")
-            else:
-                logger.error(f"❌ Ошибка: {response.status_code}")
-                logger.error(f"📄 Текст ответа: {response.text[:300]}")
-            
-            time.sleep(2)
-        except Exception as e:
-            logger.error(f"❌ Ошибка: {e}")
-            time.sleep(2)
-    
-    logger.error("❌ НЕ УДАЛОСЬ ПОЛУЧИТЬ ТОКЕН")
-    return None
-
-def ask_giga(system, user, max_tokens=5000, retries=3):
-    """Запрос к GigaChat с гарантированным ожиданием 35 секунд"""
+def ask_ai(system, user, max_tokens=4000, retries=2):
+    """Запрос к AI с автоматическим переключением между 5 API"""
     
     logger.info("="*80)
-    logger.info("📤 ЗАПРОС К GIGACHAT")
+    logger.info("📤 ЗАПРОС К AI")
     logger.info(f"📝 Система: {system[:100]}...")
     logger.info(f"📝 Запрос: {user[:100]}...")
     
     if not user or len(user.strip()) == 0:
         user = "Сделай запрос."
     
-    token = get_giga_token()
-    if not token:
-        logger.error("❌ НЕТ ТОКЕНА")
-        return None
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user}
+    ]
     
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json'
-    }
-    
-    payload = {
-        "model": "GigaChat",
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ],
-        "temperature": 0.95,
-        "max_tokens": max_tokens
-    }
-    
-    for attempt in range(1, retries + 1):
-        try:
-            logger.info(f"🔄 Попытка {attempt}/{retries}...")
-            
-            start_time = time.time()
-            response = requests.post(
-                'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
-                headers=headers,
-                json=payload,
-                timeout=90,
-                verify=False
-            )
-            
-            elapsed = time.time() - start_time
-            logger.info(f"⏱ Ответ за {elapsed:.2f} сек")
-            logger.info(f"📡 Статус: {response.status_code}")
-            
-            if elapsed < 35:
-                wait_time = 35 - elapsed
-                logger.info(f"⏳ ОЖИДАНИЕ {wait_time:.1f} СЕКУНД")
-                time.sleep(wait_time)
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
-                if content and len(content) > 10:
-                    logger.info(f"✅ ОТВЕТ ПОЛУЧЕН ({len(content)} символов)")
-                    return content
-                else:
-                    logger.error("❌ ПУСТОЙ ОТВЕТ")
-            else:
-                logger.error(f"❌ ОШИБКА HTTP {response.status_code}")
-                logger.debug(f"📄 Текст: {response.text[:300]}")
+    # ПЕРЕБИРАЕМ ВСЕ ПРОКСИ
+    for proxy in AI_PROXIES:
+        for attempt in range(retries):
+            try:
+                logger.info(f"🔄 Прокси: {proxy['name']}, попытка {attempt+1}")
                 
-                if response.status_code == 401:
-                    logger.warning("⚠️ ТОКЕН УМЕР, СБРАСЫВАЕМ КЭШ")
-                    giga_token_cache["token"] = None
-                    giga_token_cache["expires"] = 0
-            
-            if attempt < retries:
-                time.sleep(2)
-        except Exception as e:
-            logger.error(f"❌ ОШИБКА: {e}")
-            logger.error(traceback.format_exc())
-            if attempt < retries:
-                time.sleep(3)
+                payload = {
+                    "model": proxy["model"],
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.95
+                }
+                
+                start_time = time.time()
+                
+                response = requests.post(
+                    f"{proxy['url']}/v1/chat/completions",
+                    json=payload,
+                    timeout=90,
+                    verify=False
+                )
+                
+                elapsed = time.time() - start_time
+                logger.info(f"⏱ Ответ за {elapsed:.2f} сек")
+                logger.info(f"📡 Статус: {response.status_code}")
+                
+                # Ждём 35 секунд (гарантия)
+                if elapsed < 35:
+                    wait_time = 35 - elapsed
+                    logger.info(f"⏳ ОЖИДАНИЕ {wait_time:.1f} СЕКУНД")
+                    time.sleep(wait_time)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    if content and len(content) > 10:
+                        logger.info(f"✅ ОТВЕТ ОТ {proxy['name']} ({len(content)} символов)")
+                        return content
+                    else:
+                        logger.warning(f"⚠️ Пустой ответ от {proxy['name']}")
+                else:
+                    logger.warning(f"⚠️ Ошибка {proxy['name']}: {response.status_code}")
+                
+                time.sleep(1)
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка {proxy['name']}: {e}")
+                time.sleep(1)
+        
+        logger.info(f"⏳ {proxy['name']} не ответил, переключаюсь...")
     
-    logger.error("❌ НЕ УДАЛОСЬ ПОЛУЧИТЬ ОТВЕТ")
+    logger.error("❌ НИ ОДИН ИЗ 5 API НЕ ОТВЕТИЛ")
     return None
 
 # ============================================
 # ГЕНЕРАЦИЯ КАРТИНОК
 # ============================================
 
-def generate_image(prompt, width=1024, height=768):
-    """Генерация картинки"""
+def generate_image(prompt):
     try:
         clean_prompt = prompt[:200].replace(' ', '%20').replace('"', '').replace("'", "")
-        url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width={width}&height={height}&nologo=true&seed={random.randint(1,999999)}"
+        url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=1024&height=768&nologo=true&seed={random.randint(1,999999)}"
         
         logger.info("🖼 Генерация картинки...")
         response = requests.get(url, timeout=60)
         
         if response.status_code == 200 and len(response.content) > 1000:
-            filename = f"{TEMP_IMAGE_PATH}image_{int(time.time())}_{random.randint(1000,999999)}.jpg"
+            filename = f"/tmp/image_{int(time.time())}_{random.randint(1000,999999)}.jpg"
             with open(filename, 'wb') as f:
                 f.write(response.content)
             logger.info(f"✅ Картинка создана")
             return filename
         
-        logger.error(f"❌ Ошибка картинки: {response.status_code}")
         return None
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error(f"Ошибка: {e}")
         return None
 
 def generate_post_image(theme):
@@ -319,8 +236,6 @@ def generate_test_image(topic):
 # ============================================
 
 def init_database():
-    logger.info("🗄️ ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ")
-    
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     
@@ -447,7 +362,7 @@ def generate_post():
     system = """Ты — автор канала о психологии. Напиши пост на тему.
     Минимум 800 символов. Пиши глубоко, честно, без пафоса."""
     user = f"Тема: {theme}. Пост 800+ символов."
-    response = ask_giga(system, user, 5000)
+    response = ask_ai(system, user, 4000)
     if response and len(response) >= 800:
         return response, theme
     return None, theme
@@ -461,7 +376,7 @@ def generate_test_questions(topic, count=10):
     Верни ТОЛЬКО JSON.
     Формат: [{{"question": "текст?", "options": {{"A": "вар1", "B": "вар2", "C": "вар3", "D": "вар4"}}, "scores": {{"A": 0, "B": 1, "C": 2, "D": 3}}}}]"""
     
-    response = ask_giga(system, "", 5000)
+    response = ask_ai(system, "", 4000)
     if not response:
         return None
     
@@ -492,7 +407,7 @@ def generate_analysis(topic, answers, score, total, is_paid):
         system = """Ты — психолог. Дай краткий анализ. Назови главную проблему, дай 1 инсайт."""
         user = f"Тема: {topic}\nОтветы: {answers}\nБаллы: {score} из {total}"
     
-    return ask_giga(system, user, 5000 if is_paid else 3000)
+    return ask_ai(system, user, 4000 if is_paid else 2500)
 
 # ============================================
 # TELEGRAM БОТ
@@ -653,7 +568,7 @@ def topic_callback(c):
         questions = generate_test_questions(topic, count)
         
         if not questions:
-            bot.send_message(chat_id, "❌ GigaChat не ответил. Попробуй позже.")
+            bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.")
             return
         
         sessions[chat_id] = {
@@ -755,7 +670,7 @@ def finish_test(chat_id):
         if analysis:
             bot.send_message(chat_id, f"🔍 АНАЛИЗ\n\n{analysis}", reply_markup=get_main_menu(chat_id))
         else:
-            bot.send_message(chat_id, "❌ GigaChat не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
+            bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
         
         if chat_id in sessions:
             del sessions[chat_id]
@@ -789,7 +704,7 @@ def admin_post(message):
         post, theme = generate_post()
         
         if not post:
-            bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
+            bot.send_message(message.chat.id, "❌ AI не ответил. Проверь логи.", reply_markup=admin_menu())
             return
         
         try:
@@ -818,7 +733,7 @@ def admin_post_with_image(message):
         post, theme = generate_post()
         
         if not post:
-            bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
+            bot.send_message(message.chat.id, "❌ AI не ответил. Проверь логи.", reply_markup=admin_menu())
             return
         
         image_path = generate_post_image(theme)
@@ -859,7 +774,7 @@ def admin_test_to_channel(message):
         questions = generate_test_questions(topic, 10)
         
         if not questions:
-            bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
+            bot.send_message(message.chat.id, "❌ AI не ответил. Проверь логи.", reply_markup=admin_menu())
             return
         
         image_path = generate_test_image(topic)
@@ -1005,8 +920,8 @@ def run_bot():
 
 if __name__ == "__main__":
     logger.info("🚀 ПОДГОТОВКА К ЗАПУСКУ...")
-    for i in range(5):
-        logger.info(f"🔄 Предстартовый проход #{i+1}/5")
+    for i in range(3):
+        logger.info(f"🔄 Предстартовый проход #{i+1}/3")
         super_kill_409()
         time.sleep(2)
     
