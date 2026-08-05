@@ -12,11 +12,8 @@ import random
 import glob
 import sys
 import traceback
-import hashlib
-import re
-from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
-from urllib.parse import urlparse
+from datetime import datetime
+from flask import Flask
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -137,10 +134,10 @@ for i in range(5):
     time.sleep(2)
 
 # ============================================
-# GIGACHAT (С ОЖИДАНИЕМ 30-40 СЕКУНД)
+# GIGACHAT (С ОЖИДАНИЕМ 35 СЕКУНД)
 # ============================================
 
-giga_token_cache = {"token": None, "expires": 0, "error_count": 0}
+giga_token_cache = {"token": None, "expires": 0}
 
 def get_giga_token():
     """Получение токена GigaChat"""
@@ -560,6 +557,35 @@ def save_user(chat_id, username=None, first_name=None, last_name=None):
         pass
 
 # ============================================
+# КНОПКА ЛОГОВ
+# ============================================
+
+@bot.message_handler(func=lambda m: m.text == '📋 Логи')
+def show_logs(message):
+    try:
+        chat_id = message.chat.id
+        if chat_id not in ADMIN_IDS:
+            return
+        
+        # Читаем лог-файл
+        if os.path.exists(LOG_PATH):
+            with open(LOG_PATH, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                # Берем последние 50 строк
+                last_lines = lines[-50:] if len(lines) > 50 else lines
+                logs = ''.join(last_lines)
+                
+                # Если логов слишком много - обрезаем
+                if len(logs) > 4000:
+                    logs = logs[-4000:]
+                
+                bot.send_message(chat_id, f"📋 ПОСЛЕДНИЕ 50 СТРОК ЛОГОВ:\n\n```\n{logs}\n```", parse_mode='Markdown')
+        else:
+            bot.send_message(chat_id, "❌ Файл логов не найден. Бот еще не создал логов.")
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ Ошибка при чтении логов: {e}")
+
+# ============================================
 # ОБРАБОТЧИКИ
 # ============================================
 
@@ -812,4 +838,107 @@ def admin_test_to_channel(message):
             bot.send_message(CHANNEL_ID, test_text)
         bot.send_message(message.chat.id, "✅ Тест отправлен!", reply_markup=admin_menu())
     except Exception as e:
-        bot.send_message(message.chat
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
+
+@bot.message_handler(func=lambda m: m.text == '📊 Статистика')
+def admin_stats(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    c.execute("SELECT free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated FROM stats")
+    stats_row = c.fetchone()
+    c.execute("SELECT COUNT(*) FROM users")
+    users_count = c.fetchone()[0]
+    stats_text = f"📊 Статистика\n\n👥 Пользователей: {users_count}\n🧠 Бесплатных: {stats_row[0] if stats_row else 0}\n💎 Платных: {stats_row[1] if stats_row else 0}\n🎫 Промокодов: {stats_row[2] if stats_row else 0}\n📤 Постов: {stats_row[4] if stats_row else 0}\n🖼 Картинок: {stats_row[6] if stats_row else 0}"
+    bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
+
+@bot.message_handler(func=lambda m: m.text == '🎫 Создать промокод')
+def create_promo(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    bot.send_message(message.chat.id, "🎫 Введите код (латиница, 3+ символов):")
+    bot.register_next_step_handler(message, process_create_promo)
+
+def process_create_promo(message):
+    chat_id = message.chat.id
+    code = message.text.strip().upper()
+    if code == "ОТМЕНА":
+        bot.send_message(chat_id, "❌ Отменено")
+        return
+    if not code or len(code) < 3:
+        bot.send_message(chat_id, "❌ Минимум 3 символа", reply_markup=admin_menu())
+        return
+    try:
+        c.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
+                  (code, chat_id, datetime.now().isoformat()))
+        conn.commit()
+        bot.send_message(chat_id, f"✅ Промокод: `{code}`", reply_markup=admin_menu())
+    except sqlite3.IntegrityError:
+        bot.send_message(chat_id, "❌ Уже существует", reply_markup=admin_menu())
+
+@bot.message_handler(func=lambda m: m.text == '🎫 Активировать промокод')
+def activate_promo(message):
+    bot.send_message(message.chat.id, "🎫 Введите промокод:", reply_markup=telebot.types.ReplyKeyboardRemove())
+    bot.register_next_step_handler(message, process_promo)
+
+def process_promo(message):
+    chat_id = message.chat.id
+    code = message.text.strip().upper()
+    c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
+    row = c.fetchone()
+    if not row:
+        bot.send_message(chat_id, "❌ Неверный код", reply_markup=get_main_menu(chat_id))
+        return
+    promo_id, used_by = row
+    if used_by != 0:
+        bot.send_message(chat_id, "❌ Уже использован", reply_markup=get_main_menu(chat_id))
+        return
+    c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", (chat_id, datetime.now().isoformat(), promo_id))
+    conn.commit()
+    c.execute("UPDATE stats SET promo_used = promo_used + 1")
+    conn.commit()
+    bot.send_message(chat_id, "🎉 Промокод активирован!", reply_markup=get_main_menu(chat_id))
+
+# ============================================
+# ЗАПУСК БОТА
+# ============================================
+
+def run_bot():
+    logger.info(f"🤖 ЗАПУСК {BOT_NAME} v{BOT_VERSION}")
+    logger.info(f"📊 Канал: {CHANNEL_ID}")
+    logger.info(f"👑 Админы: {ADMIN_IDS}")
+    
+    try:
+        super_kill_409()
+        time.sleep(2)
+        
+        bot.remove_webhook()
+        logger.info("✅ Вебхук удален")
+        
+        bot.polling(
+            none_stop=True,
+            interval=0,
+            timeout=20,
+            allowed_updates=['message', 'callback_query']
+        )
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка: {e}")
+        logger.error(traceback.format_exc())
+        
+        if "409" in str(e):
+            logger.info("🔄 Обнаружена 409, жесткий перезапуск...")
+            super_kill_409()
+            time.sleep(3)
+            run_bot()
+        else:
+            time.sleep(5)
+            run_bot()
+
+if __name__ == "__main__":
+    logger.info("🚀 ПОДГОТОВКА К ЗАПУСКУ...")
+    for i in range(5):
+        logger.info(f"🔄 Предстартовый проход #{i+1}/5")
+        super_kill_409()
+        time.sleep(2)
+    
+    logger.info("🚀 СТАРТ БОТА...")
+    run_bot()
