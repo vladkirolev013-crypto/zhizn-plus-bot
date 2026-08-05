@@ -14,7 +14,15 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from flask import Flask
 import urllib3
-import pytz
+
+# НЕ ИСПОЛЬЗУЕМ pytz — используем встроенный timezone
+try:
+    from zoneinfo import ZoneInfo
+    TZ = ZoneInfo('Asia/Novokuznetsk')
+except ImportError:
+    # fallback для старых версий Python
+    import pytz
+    TZ = pytz.timezone('Asia/Novokuznetsk')
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -732,7 +740,14 @@ def cmd_post(message):
 # ============================================
 # ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА)
 # ============================================
-scheduler = BackgroundScheduler(timezone='Asia/Novokuznetsk')
+# Используем встроенный timezone (без pytz)
+try:
+    from zoneinfo import ZoneInfo
+    TZ = ZoneInfo('Asia/Novokuznetsk')
+    scheduler = BackgroundScheduler(timezone=TZ)
+except Exception as e:
+    logger.warning(f"⚠️ ZoneInfo не работает, используем UTC: {e}")
+    scheduler = BackgroundScheduler()
 
 def schedule_morning():
     logger.info("⏳ Запуск утреннего поста 10:00...")
