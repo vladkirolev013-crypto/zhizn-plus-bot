@@ -27,7 +27,7 @@ ADMIN_IDS = [8746212340]
 
 TIMEZONE = ZoneInfo("Asia/Yekaterinburg")
 
-BOT_VERSION = "5.2.0"
+BOT_VERSION = "5.3.0"
 BOT_NAME = "Жизнь+ Про (AI Switch)"
 
 DB_PATH = 'channel.db'
@@ -188,7 +188,6 @@ def ask_ai(system, user, max_tokens=3000, retries=2):
         
         logger.info(f"⏳ {provider['name']} не ответил, переключаюсь...")
     
-    # Если все провайдеры упали
     logger.error("❌ ВСЕ AI-ПРОВАЙДЕРЫ НЕ ОТВЕТИЛИ")
     return None
 
@@ -524,7 +523,7 @@ def get_main_menu(chat_id):
 
 def admin_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    mk.add('📝 Пост на тему', '🧠 Тест в канал')
+    mk.add('📝 Новый пост', '🧠 Тест в канал')
     mk.add('🖼 Картинка в канал', '🎯 Сеанс коучинга')
     mk.add('🎁 Создать подарок', '📊 Статистика')
     mk.add('⏰ Расписание', '🎫 Создать промокод')
@@ -542,6 +541,14 @@ def theme_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     for theme in CHANNEL_THEMES:
         mk.add(theme.title())
+    mk.add('🔙 Назад')
+    return mk
+
+def post_type_menu():
+    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    mk.add('📝 Пост без картинки')
+    mk.add('🖼 Пост с картинкой')
+    mk.add('🖼 Только картинка')
     mk.add('🔙 Назад')
     return mk
 
@@ -563,7 +570,7 @@ def save_user(chat_id, username=None, first_name=None, last_name=None):
         pass
 
 # ============================================================
-# ОСНОВНЫЕ ОБРАБОТЧИКИ (БЫСТРЫЕ)
+# ОСНОВНЫЕ ОБРАБОТЧИКИ
 # ============================================================
 
 @bot.message_handler(commands=['start'])
@@ -760,7 +767,7 @@ def finish_test(chat_id):
         logger.error(f"Ошибка: {e}")
 
 # ============================================================
-# АДМИН-ПАНЕЛЬ (ВСЁ БЫСТРОЕ, КРОМЕ ГЕНЕРАЦИИ)
+# АДМИН-ПАНЕЛЬ
 # ============================================================
 
 @bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
@@ -775,6 +782,65 @@ def admin_panel(message):
 @bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
 def back_to_main_from_admin(message):
     start(message)
+
+# -------------------- НОВЫЙ ПОСТ (С ВЫБОРОМ) --------------------
+
+@bot.message_handler(func=lambda m: m.text == '📝 Новый пост')
+def new_post_menu(message):
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        bot.send_message(message.chat.id, "📝 Что отправляем в канал?", reply_markup=post_type_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+@bot.message_handler(func=lambda m: m.text == '📝 Пост без картинки')
+def post_without_image(message):
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        sessions[message.chat.id] = {"action": "post_without_image"}
+        bot.send_message(message.chat.id, "📝 Выбери тему для поста:", reply_markup=theme_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+@bot.message_handler(func=lambda m: m.text == '🖼 Пост с картинкой')
+def post_with_image(message):
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        sessions[message.chat.id] = {"action": "post_with_image"}
+        bot.send_message(message.chat.id, "📝 Выбери тему для поста с картинкой:", reply_markup=theme_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+@bot.message_handler(func=lambda m: m.text == '🖼 Только картинка')
+def only_image(message):
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        bot.send_message(message.chat.id, "📝 Введи описание для картинки:")
+        bot.register_next_step_handler(message, process_only_image)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+def process_only_image(message):
+    try:
+        chat_id = message.chat.id
+        prompt = message.text
+        bot.send_message(chat_id, "🖼 Генерация картинки...\n⏱ Ожидание до 30 сек")
+        image_path = generate_image(prompt)
+        if image_path:
+            with open(image_path, 'rb') as photo:
+                bot.send_photo(CHANNEL_ID, photo, caption=f"🖼 {prompt}")
+            os.remove(image_path)
+            c.execute("UPDATE stats SET images_generated = images_generated + 1")
+            conn.commit()
+            bot.send_message(chat_id, "✅ Картинка отправлена в канал!", reply_markup=admin_menu())
+        else:
+            bot.send_message(chat_id, "❌ Не удалось создать картинку.", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 # -------------------- СТАТИСТИКА (МГНОВЕННО) --------------------
 
@@ -847,55 +913,19 @@ def show_logs(message):
     except Exception as e:
         bot.send_message(chat_id, f"❌ Ошибка: {e}")
 
-# -------------------- ПОСТЫ (АИ) --------------------
-
-@bot.message_handler(func=lambda m: m.text == '📝 Пост на тему')
-def choose_post_theme(message):
-    try:
-        if message.chat.id not in ADMIN_IDS:
-            return
-        sessions[message.chat.id] = {"action": "post_to_channel"}
-        bot.send_message(message.chat.id, "📝 Выбери тему для поста:", reply_markup=theme_menu())
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-
-# -------------------- ТЕСТЫ В КАНАЛ (АИ) --------------------
-
-@bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
-def test_to_channel_start(message):
-    try:
-        if message.chat.id not in ADMIN_IDS:
-            return
-        sessions[message.chat.id] = {"action": "test_to_channel"}
-        bot.send_message(message.chat.id, "🧠 Выбери тему для теста:", reply_markup=theme_menu())
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-
-# -------------------- КАРТИНКИ В КАНАЛ (БЫСТРО) --------------------
+# -------------------- КАРТИНКИ В КАНАЛ (ОТДЕЛЬНАЯ КНОПКА) --------------------
 
 @bot.message_handler(func=lambda m: m.text == '🖼 Картинка в канал')
 def image_to_channel(message):
     try:
         if message.chat.id not in ADMIN_IDS:
             return
-        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
-        mk.add(telebot.types.InlineKeyboardButton("🖼 Отправить картинку", callback_data="send_image_only"))
-        mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_image"))
-        bot.send_message(message.chat.id, "🖼 Что делаем с картинкой?", reply_markup=mk)
+        bot.send_message(message.chat.id, "📝 Введи описание для картинки:")
+        bot.register_next_step_handler(message, process_image_only_standalone)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-@bot.callback_query_handler(func=lambda c: c.data == 'send_image_only')
-def send_image_only(c):
-    try:
-        chat_id = c.message.chat.id
-        bot.edit_message_text("📝 Введи описание для картинки:", chat_id, c.message.message_id)
-        bot.register_next_step_handler(c.message, process_image_only)
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-    c.answer()
-
-def process_image_only(message):
+def process_image_only_standalone(message):
     try:
         chat_id = message.chat.id
         prompt = message.text
@@ -913,15 +943,17 @@ def process_image_only(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-@bot.callback_query_handler(func=lambda c: c.data == 'cancel_image')
-def cancel_image(c):
+# -------------------- ТЕСТЫ В КАНАЛ (АИ) --------------------
+
+@bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
+def test_to_channel_start(message):
     try:
-        chat_id = c.message.chat.id
-        bot.delete_message(chat_id, c.message.message_id)
-        bot.send_message(chat_id, "❌ Отменено", reply_markup=admin_menu())
+        if message.chat.id not in ADMIN_IDS:
+            return
+        sessions[message.chat.id] = {"action": "test_to_channel"}
+        bot.send_message(message.chat.id, "🧠 Выбери тему для теста:", reply_markup=theme_menu())
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-    c.answer()
 
 # -------------------- ОБЩИЙ ОБРАБОТЧИК ДЛЯ ВЫБОРА ТЕМЫ --------------------
 
@@ -973,8 +1005,8 @@ def handle_theme_selection(message):
             
             sessions[chat_id] = {}
             
-        elif action == "post_to_channel":
-            # === ПОСТ ===
+        elif action == "post_without_image":
+            # === ПОСТ БЕЗ КАРТИНКИ ===
             bot.send_message(chat_id, f"⏳ Генерация поста на тему '{theme}'...\n⏱ Ожидание до 30 сек")
             post = generate_post(theme)
             if not post:
@@ -990,16 +1022,41 @@ def handle_theme_selection(message):
             except:
                 pass
             
+            bot.send_message(CHANNEL_ID, post)
+            bot.send_message(chat_id, "✅ Пост отправлен в канал!", reply_markup=admin_menu())
+            sessions[chat_id] = {}
+            
+        elif action == "post_with_image":
+            # === ПОСТ С КАРТИНКОЙ ===
+            bot.send_message(chat_id, f"⏳ Генерация поста на тему '{theme}'...\n⏱ Ожидание до 30 сек")
+            post = generate_post(theme)
+            if not post:
+                bot.send_message(chat_id, "❌ AI не ответил.", reply_markup=admin_menu())
+                sessions[chat_id] = {}
+                return
+            
             bot.send_message(chat_id, "🖼 Генерация картинки к посту...")
             image_path = generate_post_image(theme)
             
             try:
+                c.execute("INSERT INTO posts_history (content, topic, image_path) VALUES (?, ?, ?)", (post, theme, image_path if image_path else ""))
+                conn.commit()
+                c.execute("UPDATE stats SET posts_count = posts_count + 1")
                 if image_path:
-                    with open(image_path, 'rb') as photo:
-                        bot.send_photo(CHANNEL_ID, photo, caption=post)
-                    os.remove(image_path)
                     c.execute("UPDATE stats SET images_generated = images_generated + 1")
-                    conn.commit()
+                conn.commit()
+            except:
+                pass
+            
+            try:
+                if image_path:
+                    # Отправляем картинку с подписью (обрезаем до 900 символов, если длинный пост)
+                    caption = post[:900] + "..." if len(post) > 900 else post
+                    with open(image_path, 'rb') as photo:
+                        bot.send_photo(CHANNEL_ID, photo, caption=caption)
+                    os.remove(image_path)
+                    # Отправляем полный пост отдельным сообщением
+                    bot.send_message(CHANNEL_ID, post)
                 else:
                     bot.send_message(CHANNEL_ID, post)
                 bot.send_message(chat_id, "✅ Пост с картинкой отправлен в канал!", reply_markup=admin_menu())
