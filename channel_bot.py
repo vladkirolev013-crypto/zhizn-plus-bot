@@ -11,8 +11,9 @@ import base64
 import random
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask, request
+from flask import Flask
 import urllib3
+import glob
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -21,8 +22,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ============================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@zhizn_plus')
-WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL', 'https://zhizn-plus-bot.onrender.com') + '/webhook'
-
 GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
 GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
 
@@ -33,6 +32,40 @@ if not BOT_TOKEN:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ============================================
+# ЖЁСТКОЕ УДАЛЕНИЕ 409 И OFFSET-ФАЙЛОВ
+# ============================================
+def kill_webhook_and_offset():
+    """Удаляет вебхук и старые offset-файлы — 409 уходит навсегда"""
+    try:
+        # 1. Удаляем вебхук
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        response = requests.post(url, json={"drop_pending_updates": True})
+        logger.info(f"🧹 Удаление вебхука: {response.text}")
+        
+        # 2. Удаляем offset-файлы (самая частая причина 409)
+        offset_files = glob.glob('update-offset-*.json')
+        for file in offset_files:
+            try:
+                os.remove(file)
+                logger.info(f"🧹 Удалён offset-файл: {file}")
+            except:
+                pass
+        
+        # 3. Проверяем, что вебхук действительно удалён
+        time.sleep(1)
+        check_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+        check = requests.get(check_url)
+        logger.info(f"🔍 Статус вебхука: {check.text}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка очистки: {e}")
+        return False
+
+kill_webhook_and_offset()
+time.sleep(2)
 
 # ============================================
 # GIGACHAT
@@ -75,6 +108,7 @@ def get_giga_token():
 def ask_giga(system, user, max_tokens=2500):
     token = get_giga_token()
     if not token:
+        logger.error("❌ Токен не получен")
         return None
     
     headers = {
@@ -93,26 +127,47 @@ def ask_giga(system, user, max_tokens=2500):
     }
     
     try:
+        logger.info("📤 Отправляю запрос в GigaChat...")
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
             json=payload,
-            timeout=30,
+            timeout=60,
             verify=False
         )
         
+        logger.info(f"✅ GigaChat ответил: {response.status_code}")
+        
         if response.status_code != 200:
-            logger.error(f"GigaChat ошибка: {response.status_code}")
+            logger.error(f"❌ Текст ошибки: {response.text[:500]}")
             return None
         
-        return response.json()['choices'][0]['message']['content']
+        result = response.json()
+        content = result['choices'][0]['message']['content']
+        return content
         
+    except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут GigaChat (60 секунд)")
+        return None
     except Exception as e:
-        logger.error(f"GigaChat ошибка: {e}")
+        logger.error(f"❌ Ошибка GigaChat: {e}")
         return None
 
+def ask_giga_with_wait(system, user, max_tokens=2500):
+    """Ждёт ответа 30 секунд (защита от мгновенного сбоя)"""
+    start_time = time.time()
+    result = ask_giga(system, user, max_tokens)
+    elapsed = time.time() - start_time
+    
+    if elapsed < 30 and result is not None:
+        wait_time = 30 - elapsed
+        logger.info(f"⏳ Ожидание {wait_time:.1f} секунд (для стабильности)")
+        time.sleep(wait_time)
+    
+    return result
+
 # ============================================
-# TELEGRAM БОТ (ВЕБХУК)
+# TELEGRAM БОТ
 # ============================================
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -175,7 +230,7 @@ def generate_test_questions(topic, count=10):
     ]
     Верни ТОЛЬКО JSON."""
     
-    response = ask_giga(system, user, max_tokens=3000)
+    response = ask_giga_with_wait(system, user, max_tokens=3000)
     if not response:
         return None
     
@@ -201,6 +256,9 @@ def generate_test_questions(topic, count=10):
         logger.error(f"Ошибка парсинга: {e}")
         return None
 
+# ============================================
+# ГЕНЕРАТОР АНАЛИЗА
+# ============================================
 def generate_analysis(topic, answers, score, total, is_paid):
     min_len = 1400 if is_paid else 700
     
@@ -213,11 +271,14 @@ def generate_analysis(topic, answers, score, total, is_paid):
         user = f"""Тема: {topic}. Ответы: {answers}. Баллы: {score} из {total}.
         Проведи глубокий разбор личности. Дай 2 инсайта и 2 вопроса для размышления."""
     
-    response = ask_giga(system, user, max_tokens=3000 if is_paid else 2000)
+    response = ask_giga_with_wait(system, user, max_tokens=3000 if is_paid else 2000)
     if not response or len(response) < min_len * 0.7:
         return None
     return response
 
+# ============================================
+# ГЕНЕРАТОР ПОСТА
+# ============================================
 def generate_post():
     themes = ["утренняя энергия", "внутренняя сила", "радость в простых вещах", "преодоление страхов", "любовь к себе", "благодарность"]
     theme = random.choice(themes)
@@ -225,33 +286,29 @@ def generate_post():
     system = """Ты — психолог и коуч. Напиши пост для Telegram, который даёт энергию, использует мягкое НЛП, не повторяется."""
     user = f"""Напиши пост на тему "{theme}" для Telegram. Длина: 800–1000 знаков. Заголовок с эмодзи. Практический совет. Хештеги."""
     
-    response = ask_giga(system, user, max_tokens=2000)
+    response = ask_giga_with_wait(system, user, max_tokens=2000)
     if not response or len(response) < 700:
         return None
     return response
 
 # ============================================
-# FLASK ПРИЛОЖЕНИЕ (ВЕБХУК)
+# ВЕБ-СЕРВЕР
 # ============================================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Бот Жизнь+ работает!"
+    return "OK"
 
 @app.route('/health')
 def health():
     return {"status": "ok"}
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    else:
-        return '', 403
+def run_flask():
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+
+threading.Thread(target=run_flask, daemon=True).start()
 
 # ============================================
 # МЕНЮ
@@ -678,7 +735,7 @@ def cmd_post(message):
     bot.send_message(message.chat.id, "✅ Пост отправлен в канал!")
 
 # ============================================
-# ПЛАНИРОВЩИК (10:00, 13:00, 17:00 — ЮРГА)
+# ПЛАНИРОВЩИК
 # ============================================
 scheduler = BackgroundScheduler()
 
@@ -704,24 +761,9 @@ scheduler.add_job(schedule_evening, 'cron', hour=17, minute=0)
 scheduler.start()
 
 # ============================================
-# ЗАПУСК (ВЕБХУК)
+# ЗАПУСК
 # ============================================
 if __name__ == '__main__':
-    # ПРИНУДИТЕЛЬНО УДАЛЯЕМ ВЕБХУК
-    try:
-        bot.delete_webhook()
-        logger.info("✅ Вебхук удалён")
-    except:
-        pass
-    
-    time.sleep(2)
-    
-    # УСТАНАВЛИВАЕМ НОВЫЙ ВЕБХУК
-    try:
-        bot.set_webhook(url=WEBHOOK_URL)
-        logger.info(f"✅ Вебхук установлен: {WEBHOOK_URL}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка установки вебхука: {e}")
-    
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    logger.info("🚀 БОТ ЗАПУЩЕН")
+    logger.info("✅ Готов к работе!")
+    bot.polling(none_stop=True)
