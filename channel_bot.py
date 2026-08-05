@@ -29,21 +29,19 @@ ADMIN_IDS = [8746212340]
 OPENROUTER_API_KEY = "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"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Agnes AI (БЕСПЛАТНО)
-AGNES_API_KEY = "" # СЮДА ВСТАВИШЬ КЛЮЧ ЗАВТРА
+# Agnes AI (пока закомментирован, будем использовать Pollinations как основной)
+AGNES_API_KEY = ""  # Оставь пустым пока
 AGNES_API_URL = "https://platform.agnes-ai.com/api/v1/images/generations"
 
-# Часовой пояс (Юрга UTC+5)
+# Часовой пояс
 TIMEZONE = ZoneInfo("Asia/Yekaterinburg")
 
-# Версия
-BOT_VERSION = "3.0.0"
-BOT_NAME = "Жизнь+ Мега"
+BOT_VERSION = "3.1.0"
+BOT_NAME = "Жизнь+ Про"
 
 DB_PATH = 'channel.db'
 LOG_PATH = 'bot_logs.txt'
 
-# 7 тем канала
 CHANNEL_THEMES = [
     "психология",
     "отношения",
@@ -55,7 +53,7 @@ CHANNEL_THEMES = [
 ]
 
 # ============================================================
-# МАКСИМАЛЬНОЕ ЛОГИРОВАНИЕ
+# ЛОГИРОВАНИЕ
 # ============================================================
 
 logging.basicConfig(
@@ -70,7 +68,7 @@ logger = logging.getLogger(__name__)
 logger.info(f"🚀 ЗАПУСК {BOT_NAME} v{BOT_VERSION}")
 
 # ============================================================
-# УБИЙЦА 409 (30 СПОСОБОВ)
+# УБИЙЦА 409
 # ============================================================
 
 def super_kill_409():
@@ -169,101 +167,48 @@ def ask_openrouter(system, user, max_tokens=8000, model=None, retries=3):
     return None
 
 # ============================================================
-# ГЕНЕРАЦИЯ КАРТИНОК (МЕГА-ВЕРСИЯ)
+# ГЕНЕРАЦИЯ КАРТИНОК (РАБОЧАЯ ВЕРСИЯ)
 # ============================================================
 
-def generate_image_agnes(prompt, width=1024, height=768, style="photorealistic"):
-    """Генерация мега-крутой картинки через Agnes AI"""
-    if not AGNES_API_KEY:
-        logger.error("❌ AGNES_API_KEY не установлен. Использую Pollinations.")
-        return generate_image_pollinations(prompt)
-    
+def generate_image(prompt, width=1024, height=768):
+    """Генерация картинки через Pollinations (работает без ключей)"""
     try:
-        headers = {
-            "Authorization": f"Bearer {AGNES_API_KEY}",
-            "Content-Type": "application/json"
-        }
+        clean_prompt = prompt[:200].replace(' ', '%20').replace('"', '').replace("'", "").replace(',', '%2C')
+        url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width={width}&height={height}&nologo=true&seed={random.randint(1,999999)}"
         
-        payload = {
-            "prompt": prompt,
-            "width": width,
-            "height": height,
-            "style": style,
-            "model": "Agnes-Image-2.0-Flash",
-            "quality": "hd",
-            "num_images": 1
-        }
-        
-        logger.info("🖼 Генерация мега-картинки через Agnes AI...")
-        response = requests.post(
-            AGNES_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=90,
-            verify=False
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            image_url = data.get('data', [{}])[0].get('url', '')
-            
-            if image_url:
-                img_response = requests.get(image_url, timeout=60)
-                if img_response.status_code == 200:
-                    filename = f"/tmp/image_{int(time.time())}_{random.randint(1000,999999)}.jpg"
-                    with open(filename, 'wb') as f:
-                        f.write(img_response.content)
-                    logger.info(f"✅ Мега-картинка создана: {filename}")
-                    return filename
-                else:
-                    logger.warning("⚠️ Не удалось скачать картинку")
-        
-        logger.warning("⚠️ Agnes AI не ответил, использую Pollinations")
-        return generate_image_pollinations(prompt)
-        
-    except Exception as e:
-        logger.error(f"Ошибка Agnes AI: {e}")
-        return generate_image_pollinations(prompt)
-
-def generate_image_pollinations(prompt):
-    """Резервная генерация через Pollinations (старая версия)"""
-    try:
-        clean_prompt = prompt[:200].replace(' ', '%20').replace('"', '').replace("'", "")
-        url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=1024&height=768&nologo=true&seed={random.randint(1,999999)}"
+        logger.info("🖼 Генерация картинки...")
         response = requests.get(url, timeout=60)
+        
         if response.status_code == 200 and len(response.content) > 1000:
             filename = f"/tmp/image_{int(time.time())}_{random.randint(1000,999999)}.jpg"
             with open(filename, 'wb') as f:
                 f.write(response.content)
+            logger.info(f"✅ Картинка создана: {filename}")
             return filename
-        return None
+        else:
+            logger.error(f"❌ Ошибка генерации: {response.status_code}")
+            return None
     except Exception as e:
-        logger.error(f"Ошибка Pollinations: {e}")
+        logger.error(f"❌ Ошибка: {e}")
         return None
 
-def generate_post_image(theme, super_quality=True):
+def generate_post_image(theme):
     """Генерация картинки для поста"""
     prompts = [
-        f"inspiring abstract art {theme}, warm golden sunrise colors, motivational atmosphere, emotional depth, 4k resolution, award-winning photography style, spiritual growth",
-        f"beautiful landscape {theme}, serenity, hope, positive energy, meditation, ethereal lighting, cinematic composition",
-        f"minimalist illustration {theme}, soft pastel, inner peace, self discovery, healing, dreamy aesthetic, delicate textures"
+        f"inspiring abstract art {theme}, warm colors, motivational, peaceful, spiritual growth",
+        f"beautiful landscape {theme}, sunrise, hope, positive energy, meditation",
+        f"minimalist illustration {theme}, soft pastel, calm, self discovery, healing"
     ]
-    prompt = random.choice(prompts)
-    if super_quality:
-        return generate_image_agnes(prompt)
-    return generate_image_pollinations(prompt)
+    return generate_image(random.choice(prompts))
 
-def generate_test_image(topic, super_quality=True):
+def generate_test_image(topic):
     """Генерация картинки для теста"""
     prompts = [
-        f"minimalist psychological illustration {topic}, brain with glowing neural connections, introspection, deep blue and gold, surreal art, high detail, psychological depth, 4k",
-        f"abstract psychology art {topic}, meditation, self reflection, calm, serene, emotional intelligence, artistic masterpiece",
-        f"mindfulness illustration {topic}, inner peace, growth, positive energy, wisdom, spiritual awakening, intricate details"
+        f"psychological test illustration {topic}, brain, mind, introspection, deep colors",
+        f"abstract psychology art {topic}, meditation, self reflection, calm, serene",
+        f"mental health awareness {topic}, healing, balance, harmony, soothing"
     ]
-    prompt = random.choice(prompts)
-    if super_quality:
-        return generate_image_agnes(prompt)
-    return generate_image_pollinations(prompt)
+    return generate_image(random.choice(prompts))
 
 # ============================================================
 # БАЗА ДАННЫХ
@@ -405,8 +350,7 @@ def generate_analysis(topic, answers, score, total, is_paid):
 def generate_consultation_questions():
     system = """Ты — профессиональный психолог-коуч.
     Составь 25 глубинных вопросов для сеанса психотерапии.
-    Вопросы должны раскрывать личность, травмы, убеждения, сценарии.
-    Верни ТОЛЬКО JSON массив.
+    Верни ТОЛЬКО JSON.
     Формат: [{"question": "текст вопроса?"}]"""
     response = ask_openrouter(system, "", 8000, model="deepseek/deepseek-v4-flash:free")
     if not response:
@@ -422,18 +366,16 @@ def generate_consultation_questions():
         return None
 
 def generate_consultation_analysis(answers, chat_id, session_id):
-    system = """ТЫ — ВЕДУЩИЙ ПСИХОЛОГ-КОУЧ МИРОВОГО УРОВНЯ.
-    Проведи полный разбор личности на основе ответов пользователя.
+    system = """ТЫ — ВЕДУЩИЙ ПСИХОЛОГ-КОУЧ.
+    Проведи полный разбор личности на основе ответов.
     СТРУКТУРА:
-    1. ГЛАВНАЯ РАНА (что болит сильнее всего)
-    2. КАК ЭТО УПРАВЛЯЕТ ТОБОЙ СЕЙЧАС (поведение, эмоции, решения)
-    3. КОРЕНЬ (откуда это взялось)
-    4. 3 ШАГА, КОТОРЫЕ МОЖНО СДЕЛАТЬ УЖЕ СЕГОДНЯ
-    5. КУДА ОБРАТИТЬСЯ (психологи, линии помощи, книги)
-    6. ЗАКЛЮЧЕНИЕ (поддержка и надежда)
-    Объем: 1500-2500 знаков.
-    Язык: честный, глубокий, поддерживающий.
-    НЕ ИСПОЛЬЗУЙ общие фразы. Только конкретика по ответам."""
+    1. ГЛАВНАЯ РАНА
+    2. КАК ЭТО УПРАВЛЯЕТ ТОБОЙ
+    3. КОРЕНЬ
+    4. 3 ШАГА НА СЕГОДНЯ
+    5. КУДА ОБРАТИТЬСЯ
+    6. ЗАКЛЮЧЕНИЕ
+    Объем: 1500-2500 знаков."""
     user = f"Ответы пользователя:\n\n{answers}"
     response = ask_openrouter(system, user, 10000, model="nvidia/nemotron-3-super-120b-a12b:free")
     if response:
@@ -790,9 +732,8 @@ def image_to_channel(message):
     try:
         if message.chat.id not in ADMIN_IDS:
             return
-        mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+        mk = telebot.types.InlineKeyboardMarkup(row_width=1)
         mk.add(telebot.types.InlineKeyboardButton("🖼 Отправить картинку", callback_data="send_image_only"))
-        mk.add(telebot.types.InlineKeyboardButton("📝 Пост с картинкой", callback_data="send_post_with_image"))
         mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_image"))
         bot.send_message(message.chat.id, "🖼 Что делаем с картинкой?", reply_markup=mk)
     except Exception as e:
@@ -813,7 +754,7 @@ def process_image_only(message):
         chat_id = message.chat.id
         prompt = message.text
         bot.send_message(chat_id, "🖼 Генерация картинки...\n⏱ Ожидание до 60 сек")
-        image_path = generate_image_agnes(prompt)
+        image_path = generate_image(prompt)
         if image_path:
             with open(image_path, 'rb') as photo:
                 bot.send_photo(CHANNEL_ID, photo, caption=f"🖼 {prompt}")
@@ -826,18 +767,6 @@ def process_image_only(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-@bot.callback_query_handler(func=lambda c: c.data == 'send_post_with_image')
-def send_post_with_image(c):
-    try:
-        chat_id = c.message.chat.id
-        bot.edit_message_text("📝 Выбери тему для поста с картинкой:", chat_id, c.message.message_id)
-        mk = theme_menu()
-        bot.send_message(chat_id, "Выбери тему:", reply_markup=mk)
-        sessions[chat_id] = {"action": "post_with_image"}
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-    c.answer()
-
 @bot.callback_query_handler(func=lambda c: c.data == 'cancel_image')
 def cancel_image(c):
     try:
@@ -847,6 +776,13 @@ def cancel_image(c):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
     c.answer()
+
+# -------------------- ПОСТ С КАРТИНКОЙ (ПРЯМО ИЗ МЕНЮ) --------------------
+
+@bot.message_handler(func=lambda m: m.text == '📝 Пост на тему' and m.chat.id in ADMIN_IDS)
+def choose_post_theme_with_image(message):
+    # Этот хендлер уже есть выше, но мы добавим возможность поста с картинкой отдельно
+    pass
 
 # -------------------- ОБЩИЙ ОБРАБОТЧИК ДЛЯ ВЫБОРА ТЕМЫ --------------------
 
@@ -915,37 +851,17 @@ def handle_theme_selection(message):
             except:
                 pass
             
-            bot.send_message(CHANNEL_ID, post)
-            bot.send_message(chat_id, "✅ Пост отправлен в канал!", reply_markup=admin_menu())
-            sessions[chat_id] = {}
-            
-        elif action == "post_with_image":
-            # === ПОСТ С КАРТИНКОЙ ===
-            bot.send_message(chat_id, f"⏳ Генерация поста и картинки на тему '{theme}'...")
-            post = generate_post(theme)
-            if not post:
-                bot.send_message(chat_id, "❌ OpenRouter не ответил.", reply_markup=admin_menu())
-                sessions[chat_id] = {}
-                return
-            
-            bot.send_message(chat_id, "🖼 Генерация картинки...")
+            # Генерируем картинку к посту
+            bot.send_message(chat_id, "🖼 Генерация картинки к посту...")
             image_path = generate_post_image(theme)
-            
-            try:
-                c.execute("INSERT INTO posts_history (content, topic, image_path) VALUES (?, ?, ?)", (post, theme, image_path if image_path else ""))
-                conn.commit()
-                c.execute("UPDATE stats SET posts_count = posts_count + 1")
-                if image_path:
-                    c.execute("UPDATE stats SET images_generated = images_generated + 1")
-                conn.commit()
-            except:
-                pass
             
             try:
                 if image_path:
                     with open(image_path, 'rb') as photo:
                         bot.send_photo(CHANNEL_ID, photo, caption=post)
                     os.remove(image_path)
+                    c.execute("UPDATE stats SET images_generated = images_generated + 1")
+                    conn.commit()
                 else:
                     bot.send_message(CHANNEL_ID, post)
                 bot.send_message(chat_id, "✅ Пост с картинкой отправлен в канал!", reply_markup=admin_menu())
@@ -974,7 +890,6 @@ def start_consultation(message):
         warning = """⚠️ ВНИМАНИЕ
 Эти вопросы могут задеть глубокие чувства.
 Если станет тяжело — нажми «⏹ Завершить сеанс».
-Ты можешь вернуться к этому сеансу в любое время.
 Ты в безопасности. Ты можешь остановиться в любой момент.
 Начать сеанс?"""
         mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -1054,7 +969,7 @@ def finish_consultation(chat_id):
             bot.send_message(chat_id, "❌ Сеанс прерван (нет ответов).", reply_markup=admin_menu())
             del consultations[chat_id]
             return
-        bot.send_message(chat_id, "📊 Спасибо за твои ответы.\n\nЯ обрабатываю их. Это займёт 1–2 минуты.\nРезультат придёт сюда автоматически.", reply_markup=admin_menu())
+        bot.send_message(chat_id, "📊 Спасибо за ответы.\n\nЯ обрабатываю их. Это займёт 1–2 минуты.\nРезультат придёт сюда автоматически.", reply_markup=admin_menu())
         def background_analysis():
             try:
                 answers_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(s['answers'])])
@@ -1191,8 +1106,6 @@ def process_gift_activation(message):
             chat_id,
             "🎉 ПОДАРОК АКТИВИРОВАН!\n\n"
             "Ты получаешь бесплатный сеанс коучинга на 25 вопросов.\n\n"
-            "Я задам тебе 25 глубинных вопросов.\n"
-            "Отвечай честно — это поможет тебе лучше понять себя.\n\n"
             "Готов? Нажми «✅ Начать сеанс»",
             reply_markup=telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1).add('✅ Начать сеанс')
         )
@@ -1209,10 +1122,10 @@ def start_gift_consultation(message):
     try:
         chat_id = message.chat.id
         if chat_id not in consultations or not consultations[chat_id].get('is_gift'):
-            bot.send_message(chat_id, "❌ У тебя нет активного подарка. Активируй код через «🎁 Активировать подарок».", reply_markup=get_main_menu(chat_id))
+            bot.send_message(chat_id, "❌ Нет активного подарка. Активируй код.", reply_markup=get_main_menu(chat_id))
             return
         consultations[chat_id]['is_gift'] = False
-        bot.send_message(chat_id, "🎯 Генерирую вопросы для сеанса...\n⏱ Ожидание до 35 сек", reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.send_message(chat_id, "🎯 Генерирую вопросы...\n⏱ Ожидание до 35 сек", reply_markup=telebot.types.ReplyKeyboardRemove())
         questions = generate_consultation_questions()
         if not questions:
             bot.send_message(chat_id, "❌ Не удалось сгенерировать вопросы.", reply_markup=get_main_menu(chat_id))
