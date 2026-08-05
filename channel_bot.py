@@ -26,24 +26,48 @@ GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjljMmUzNT
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def kill_409():
+# ============================================
+# ЖЕСТКОЕ УБИЙСТВО 409 - ПЕРЕД ВСЕМ
+# ============================================
+
+def kill_409_forever():
+    """Уничтожает ВСЕ следы вебхука и конфликтов"""
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        requests.post(url, json={"drop_pending_updates": True})
-        for f in glob.glob('update-offset-*.json'):
-            try:
-                os.remove(f)
-            except:
-                pass
+        # 1. Удаляем вебхук 5 раз для надежности
+        for i in range(5):
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+            requests.post(url, json={"drop_pending_updates": True})
+            time.sleep(0.5)
+        
+        # 2. Сбрасываем вебхук
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        requests.post(url, json={"url": "", "drop_pending_updates": True})
+        
+        # 3. Удаляем все возможные файлы
+        for pattern in ['update-offset-*.json', '*.lock', '*.session', '*.state', '*.pid']:
+            for f in glob.glob(pattern):
+                try:
+                    os.remove(f)
+                    logger.info(f"Удален файл: {f}")
+                except:
+                    pass
+        
+        # 4. Проверяем статус
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+        response = requests.get(url)
+        logger.info(f"Вебхук статус: {response.json()}")
+        
+        time.sleep(3)
         return True
-    except:
+    except Exception as e:
+        logger.error(f"Ошибка удаления: {e}")
         return False
 
-kill_409()
-time.sleep(2)
+# ВЫПОЛНЯЕМ УБИЙСТВО 409
+kill_409_forever()
 
 # ============================================
-# GIGACHAT С ОЖИДАНИЕМ
+# GIGACHAT С ПРАВИЛЬНЫМ ОЖИДАНИЕМ
 # ============================================
 
 giga_token_cache = {"token": None, "expires": 0}
@@ -61,6 +85,7 @@ def get_giga_token():
             'Content-Type': 'application/x-www-form-urlencoded'
         }
         
+        logger.info("🔄 Получение токена...")
         response = requests.post(
             'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
             headers=headers,
@@ -89,8 +114,10 @@ def get_giga_token():
         return None
 
 def ask_giga(system, user, max_tokens=3000):
+    """Запрос к GigaChat С ОЖИДАНИЕМ 30 СЕКУНД"""
     token = get_giga_token()
     if not token:
+        logger.error("❌ Нет токена")
         return None
     
     headers = {
@@ -109,7 +136,9 @@ def ask_giga(system, user, max_tokens=3000):
     }
     
     try:
+        logger.info("📤 Запрос к GigaChat...")
         start_time = time.time()
+        
         response = requests.post(
             'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
             headers=headers,
@@ -119,350 +148,29 @@ def ask_giga(system, user, max_tokens=3000):
         )
         
         elapsed = time.time() - start_time
+        logger.info(f"⏱ Ответ за {elapsed:.1f} сек")
         
+        # ГАРАНТИРОВАННОЕ ОЖИДАНИЕ 30 СЕКУНД
         if elapsed < 30:
             wait_time = 30 - elapsed
-            logger.info(f"⏳ Ожидание {wait_time:.1f} сек")
+            logger.info(f"⏳ Ожидание {wait_time:.1f} сек (гарантия генерации)")
             time.sleep(wait_time)
         
         if response.status_code != 200:
-            logger.error(f"Ошибка: {response.status_code}")
+            logger.error(f"Ошибка GigaChat: {response.status_code}")
             return None
         
         result = response.json()
-        return result['choices'][0]['message']['content']
+        content = result['choices'][0]['message']['content']
+        logger.info("✅ Ответ получен")
+        return content
         
+    except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут 90 сек")
+        return None
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"❌ Ошибка: {e}")
         return None
-
-# ============================================
-# ИДЕАЛЬНЫЕ ПРОМПТЫ - НЕ ПОВТОРЯЮТСЯ НИКОГДА
-# ============================================
-
-# 100+ ТЕМ ДЛЯ ПОСТОВ (каждый раз случайная)
-POST_THEMES = [
-    "внутренняя сила и ресурсность",
-    "как перестать себя обесценивать",
-    "искусство говорить НЕТ",
-    "почему мы боимся перемен",
-    "как полюбить свое тело",
-    "энергия денег и изобилие",
-    "как выйти из токсичных отношений",
-    "сила благодарности каждый день",
-    "как перестать ждать одобрения",
-    "осознанное одиночество vs одиночество",
-    "как прощать себя за ошибки",
-    "эмоциональный интеллект в действии",
-    "как превратить страх в топливо",
-    "искусство быть уязвимым",
-    "как найти свое призвание",
-    "сила тишины и внутреннего покоя",
-    "как выстроить личные границы",
-    "психология денег: мышление богатого",
-    "как пережить предательство",
-    "искусство отпускать людей",
-    "как стать лучшей версией себя",
-    "сила привычек и ритуалов",
-    "как управлять своими эмоциями",
-    "почему мы выбираем не тех партнеров",
-    "как исцелить внутреннего ребенка",
-    "искусство быть счастливым здесь и сейчас",
-    "как перестать сравнивать себя с другими",
-    "сила рода и родовые сценарии",
-    "как выйти из созависимости",
-    "искусство принимать комплименты",
-    "как полюбить свою работу",
-    "сила дыхания и осознанности",
-    "как пережить кризис среднего возраста",
-    "искусство благодарности",
-    "как найти опору внутри себя",
-    "психология успеха и неудач",
-    "как перестать быть жертвой",
-    "сила женской энергии",
-    "как выстроить здоровые отношения с едой",
-    "искусство быть в потоке",
-    "как преодолеть прокрастинацию",
-    "сила утра и новые начинания",
-    "как исцелить отношения с родителями",
-    "искусство быть лидером своей жизни",
-    "как перестать контролировать всё",
-    "сила прощения себя и других",
-    "как найти радость в простых вещах",
-    "психология изобилия и достатка",
-    "как выйти из зоны комфорта",
-    "искусство слушать свое сердце",
-    "как стать увереннее в себе",
-    "сила юмора и легкости",
-    "как пережить потерю близкого",
-    "искусство быть в гармонии с собой",
-    "как развить интуицию",
-    "сила творчества и самовыражения",
-    "как перестать тревожиться о будущем",
-    "искусство настоящего момента",
-    "как принять свою уникальность",
-    "психология отношений с деньгами",
-    "как выстроить доверие к себе",
-    "сила тишины и уединения",
-    "как пережить измену и предательство",
-    "искусство быть щедрым к себе",
-    "как найти внутренний стержень",
-    "сила слова и намерения",
-    "как исцелить сердечные раны",
-    "искусство быть в контакте с телом",
-    "как перестать быть удобным для всех",
-    "сила рода и предков",
-    "как выстроить здоровую самооценку",
-    "психология успешных отношений",
-    "как перестать обесценивать свои достижения",
-    "искусство радоваться жизни",
-    "как найти силу в слабости",
-    "сила намерения и фокуса",
-    "как пережить развод и расставание",
-    "искусство быть в потоке денег",
-    "как полюбить свои несовершенства",
-    "сила благословения и благодарности",
-    "как выстроить отношения с собой",
-    "психология счастья и удовлетворенности",
-    "как перестать бояться осуждения",
-    "искусство быть честным с собой",
-    "как найти призвание и миссию",
-    "сила дисциплины и свободы",
-    "как исцелить травмы прошлого",
-    "искусство быть в гармонии с миром",
-    "как перестать искать виноватых",
-    "сила прощения и отпускания",
-    "как выстроить здоровые отношения с деньгами",
-    "психология самореализации",
-    "как перестать играть роли",
-    "искусство быть подлинным",
-    "как найти внутреннюю опору",
-    "сила каждого нового дня",
-    "как пережить эмоциональное выгорание",
-    "искусство быть в контакте с душой",
-    "как выстроить отношения мечты",
-    "сила благодарности как практика",
-    "как перестать жить чужими ожиданиями",
-    "искусство быть свободным",
-    "как найти радость в процессе жизни"
-]
-
-# ============================================
-# ИДЕАЛЬНЫЙ ПРОМПТ ДЛЯ ПОСТА
-# ============================================
-
-def generate_post():
-    """Генерирует УНИКАЛЬНЫЙ пост - НИКОГДА НЕ ПОВТОРЯЕТСЯ"""
-    theme = random.choice(POST_THEMES)
-    
-    system = """ТЫ - МИРОВОЙ ЭКСПЕРТ В ПСИХОЛОГИИ И КОУЧИНГЕ, автор бестселлеров.
-    
-    ТВОЙ СТИЛЬ:
-    - Глубокий, мудрый, без пафоса
-    - Используешь НЛП-язык (предикаты, якоря, метамодель)
-    - Каждый пост - терапевтический сеанс
-    - Энергия текста заряжает и мотивирует
-    - Высокий уровень осознанности и глубины
-    - Ты говоришь с читателем как с равным
-    - Используешь метафоры, истории, вопросы
-    
-    КАЖДЫЙ ПОСТ УНИКАЛЕН - ты создаешь шедевр здесь и сейчас
-    НЕЛЬЗЯ использовать шаблоны, клише, общие фразы
-    НЕЛЬЗЯ повторяться - каждый пост как откровение
-    
-    СТРУКТУРА ПОСТА:
-    1. ЗАХВАТЫВАЮЩИЙ ЗАГОЛОВОК (с эмодзи)
-    2. ГЛУБОКОЕ ВСТУПЛЕНИЕ (затрагивает струны души)
-    3. ОСНОВНАЯ ЧАСТЬ (инсайты, открытия, прозрения)
-    4. ПРАКТИЧЕСКОЕ ЗАДАНИЕ (конкретное, выполнимое)
-    5. ВОПРОС К ЧИТАТЕЛЮ (провокационный, пробуждающий)
-    6. МОТИВИРУЮЩИЙ ФИНАЛ (крылья и энергия)
-    7. ХЕШТЕГИ (#жизньплюс #саморазвитие)
-    
-    ДЛИНА: 800-1200 знаков (как живой разговор)
-    
-    ВАЖНО: 
-    - Пиши от первого лица
-    - Будь честным, даже если это неудобно
-    - Дай читателю ощущение "ЭТО ПРО МЕНЯ"
-    - Заряди энергией действия
-    - Оставь послевкусие трансформации"""
-    
-    user = f"""Напиши глубокий, трансформирующий пост на тему: "{theme}"
-    
-    Ты уже затрагивал эту тему? Отлично! Напиши СОВЕРШЕННО ПО-НОВОМУ.
-    
-    Используй свой 25-летний опыт работы с людьми.
-    Сделай этот пост откровением для каждого читателя.
-    
-    Время писать ШЕДЕВР!"""
-    
-    response = ask_giga(system, user, 3000)
-    
-    if response and len(response) > 500:
-        return response
-    
-    # Если не получилось - пробуем еще раз с другой темой
-    return None
-
-# ============================================
-# ИДЕАЛЬНЫЙ ПРОМПТ ДЛЯ ТЕСТА
-# ============================================
-
-def generate_test_questions(topic, count=10):
-    """Генерирует УНИКАЛЬНЫЙ тест - как у лучших психологов"""
-    
-    system = """ТЫ - КЛИНИЧЕСКИЙ ПСИХОЛОГ С 25-ЛЕТНИМ СТАЖЕМ, автор методик.
-    
-    ТВОИ ТЕСТЫ:
-    - Глубокие и проникающие в суть
-    - Используют проективные техники
-    - Затрагивают подсознание
-    - Каждый вопрос - мини-исследование личности
-    - Никаких банальных "как у вас дела?"
-    - Вопросы заставляют задуматься и удивиться себе
-    
-    КАЖДЫЙ ТЕСТ УНИКАЛЕН:
-    - Нет двух одинаковых тестов
-    - Вопросы всегда новые и неожиданные
-    - Ты создаешь тест здесь и сейчас
-    - Используешь свой клинический опыт
-    
-    ФОРМАТ ОТВЕТА:
-    Верни ТОЛЬКО JSON массив вопросов.
-    
-    КАЖДЫЙ ВОПРОС:
-    - Формулировка: глубокая, психологичная
-    - Варианты A, B, C, D: разные грани личности
-    - Нет правильных/неправильных ответов
-    - Есть градация от 0 до 3 баллов
-    
-    ТЕМЫ ВОПРОСОВ (варируй случайно):
-    - Детские травмы и их влияние
-    - Сценарии поведения в отношениях
-    - Отношение к деньгам и успеху
-    - Самооценка и самоценность
-    - Страхи и их корни
-    - Желания и истинные потребности
-    - Границы и их нарушение
-    - Тени и проекции
-    - Ресурсные состояния
-    - Жизненные сценарии
-    - Привязанность и сепарация
-    - Эмоциональный интеллект
-    - Копинг-стратегии
-    - Ценности и приоритеты
-    - Саботаж и самосаботаж"""
-    
-    user = f"""Составь {count} ГЛУБОКИХ психологических вопросов на тему "{topic}".
-    
-    ТРЕБОВАНИЯ:
-    - Вопросы должны ПРОНИКАТЬ вглубь личности
-    - Заставлять задуматься и удивиться
-    - Открывать то, что человек не замечал в себе
-    - Использовать проективные формулировки
-    - Быть как мини-сеанс психотерапии
-    
-    Верни ТОЛЬКО JSON:
-    [
-        {{
-            "question": "глубокий вопрос?",
-            "options": {{
-                "A": "вариант 1",
-                "B": "вариант 2",
-                "C": "вариант 3",
-                "D": "вариант 4"
-            }}
-        }}
-    ]
-    
-    Сделай каждый вопрос - маленьким откровением.
-    Время создавать ШЕДЕВР!"""
-    
-    response = ask_giga(system, user, 4000)
-    
-    if not response:
-        return None
-    
-    try:
-        start = response.find('[')
-        end = response.rfind(']') + 1
-        if start == -1 or end == -1:
-            return None
-        
-        questions = json.loads(response[start:end])
-        
-        # Добавляем баллы
-        for q in questions:
-            if 'scores' not in q:
-                q['scores'] = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
-        
-        return questions[:count]
-    except Exception as e:
-        logger.error(f"Ошибка парсинга: {e}")
-        return None
-
-# ============================================
-# ИДЕАЛЬНЫЙ ПРОМПТ ДЛЯ АНАЛИЗА
-# ============================================
-
-def generate_analysis(topic, answers, score, total, is_paid):
-    """Генерация анализа - как у лучших психологов"""
-    
-    if is_paid:
-        system = """ТЫ - КОМАНДА МИРОВОГО УРОВНЯ:
-        1. КЛИНИЧЕСКИЙ ПСИХОЛОГ с 25-летним стажем
-        2. МЕЖДУНАРОДНЫЙ КОУЧ с тысячами часов практики
-        3. АВТОР БЕСТСЕЛЛЕРОВ по личностному росту
-        
-        ТВОЙ АНАЛИЗ:
-        - Глубокий, проникающий в суть личности
-        - Трансформирующий, меняющий мышление
-        - Прямой, честный, без сахара
-        - Дает инсайты и ясность
-        - Заряжает энергией и мотивацией
-        
-        СТРУКТУРА:
-        1. ПСИХОЛОГИЧЕСКИЙ ПОРТРЕТ личности
-        2. 3 ГЛУБИННЫХ ИНСАЙТА (что важно осознать)
-        3. 3 КОНКРЕТНЫХ ШАГА НА НЕДЕЛЮ
-        4. РЕКОМЕНДАЦИИ КНИГ (по теме)
-        5. УПРАЖНЕНИЯ для практики
-        6. ВИДЕО (известных спикеров)
-        7. МОТИВИРУЮЩЕЕ ЗАКЛЮЧЕНИЕ
-        
-        ЯЗЫК: русский, живой, честный
-        ОБЪЕМ: 1500+ знаков
-        СТИЛЬ: как личный сеанс терапии"""
-    else:
-        system = """ТЫ - КЛИНИЧЕСКИЙ ПСИХОЛОГ-ПРАКТИК.
-        
-        ДАЙ КРАТКИЙ, НО ГЛУБОКИЙ АНАЛИЗ:
-        - Без воды и общих фраз
-        - 2 ключевых инсайта
-        - 2 вопроса для размышления
-        - Честно, прямо, без пафоса
-        
-        Это как 15-минутная консультация.
-        Объем: 800+ знаков."""
-    
-    user = f"""Проведи анализ личности по результатам теста.
-    
-    ТЕМА: {topic}
-    ОТВЕТЫ: {answers}
-    БАЛЛЫ: {score} из {total}
-    
-    Сделай анализ глубже, чем все предыдущие.
-    Открой человеку то, что он не видел в себе.
-    Дай ТРАНСФОРМИРУЮЩУЮ обратную связь.
-    
-    Твой опыт и мудрость нужны здесь и сейчас."""
-    
-    response = ask_giga(system, user, 4000 if is_paid else 2500)
-    
-    if response:
-        return response
-    return None
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -514,8 +222,46 @@ c.execute('''CREATE TABLE IF NOT EXISTS posts_history
 conn.commit()
 
 # ============================================
-# ТЕМЫ ТЕСТОВ
+# 100+ ТЕМ ДЛЯ ПОСТОВ
 # ============================================
+
+POST_THEMES = [
+    "внутренняя сила и ресурсность", "как перестать себя обесценивать",
+    "искусство говорить НЕТ", "почему мы боимся перемен",
+    "как полюбить свое тело", "энергия денег и изобилие",
+    "как выйти из токсичных отношений", "сила благодарности каждый день",
+    "как перестать ждать одобрения", "осознанное одиночество",
+    "как прощать себя за ошибки", "эмоциональный интеллект",
+    "как превратить страх в топливо", "искусство быть уязвимым",
+    "как найти свое призвание", "сила тишины и покоя",
+    "как выстроить личные границы", "психология денег",
+    "как пережить предательство", "искусство отпускать",
+    "как стать лучшей версией себя", "сила привычек",
+    "как управлять эмоциями", "почему мы выбираем не тех",
+    "как исцелить внутреннего ребенка", "искусство быть счастливым",
+    "как перестать сравнивать", "сила рода",
+    "как выйти из созависимости", "искусство принимать",
+    "как полюбить работу", "сила дыхания",
+    "как пережить кризис", "искусство благодарности",
+    "как найти опору", "психология успеха",
+    "как перестать быть жертвой", "сила женской энергии",
+    "как выстроить отношения с едой", "искусство быть в потоке",
+    "как преодолеть прокрастинацию", "сила утра",
+    "как исцелить отношения с родителями", "искусство быть лидером",
+    "как перестать контролировать", "сила прощения",
+    "как найти радость", "психология изобилия",
+    "как выйти из зоны комфорта", "искусство слушать сердце",
+    "как стать увереннее", "сила юмора",
+    "как пережить потерю", "искусство быть в гармонии",
+    "как развить интуицию", "сила творчества",
+    "как перестать тревожиться", "искусство настоящего момента",
+    "как принять уникальность", "психология отношений с деньгами",
+    "как выстроить доверие к себе", "сила тишины",
+    "как пережить измену", "искусство быть щедрым",
+    "как найти внутренний стержень", "сила слова",
+    "как исцелить сердечные раны", "искусство быть в контакте с телом",
+    "как перестать быть удобным", "сила рода и предков"
+]
 
 TEST_TOPICS = {
     "психология": "🧠 Глубинная психология",
@@ -527,10 +273,155 @@ TEST_TOPICS = {
 }
 
 # ============================================
+# ИДЕАЛЬНЫЙ ПРОМПТ ДЛЯ ПОСТА
+# ============================================
+
+def generate_post():
+    theme = random.choice(POST_THEMES)
+    
+    system = """ТЫ - МИРОВОЙ ЭКСПЕРТ В ПСИХОЛОГИИ И КОУЧИНГЕ.
+    
+    ТВОЙ СТИЛЬ:
+    - Глубокий, мудрый, без пафоса
+    - Используешь НЛП-язык
+    - Каждый пост - терапевтический сеанс
+    - Энергия текста заряжает и мотивирует
+    
+    СТРУКТУРА:
+    1. ЗАХВАТЫВАЮЩИЙ ЗАГОЛОВОК (с эмодзи)
+    2. ГЛУБОКОЕ ВСТУПЛЕНИЕ
+    3. ОСНОВНАЯ ЧАСТЬ (инсайты)
+    4. ПРАКТИЧЕСКОЕ ЗАДАНИЕ
+    5. ВОПРОС К ЧИТАТЕЛЮ
+    6. МОТИВИРУЮЩИЙ ФИНАЛ
+    7. ХЕШТЕГИ
+    
+    ДЛИНА: 800-1200 знаков"""
+    
+    user = f"""Напиши пост на тему: "{theme}"
+    Сделай его уникальным и трансформирующим."""
+    
+    response = ask_giga(system, user, 3000)
+    if response and len(response) > 500:
+        return response
+    return None
+
+# ============================================
+# ИДЕАЛЬНЫЙ ПРОМПТ ДЛЯ ТЕСТА (Б ВАРИАНТ)
+# ============================================
+
+def generate_test_questions(topic, count=10):
+    if count == 10:
+        system = """Ты — эксперт по клинической психологии.
+        Создай СКРИНИНГОВЫЙ тест из 10 вопросов.
+        Каждый вопрос должен задевать МАКСИМУМ сфер.
+        Верни ТОЛЬКО JSON массив."""
+        
+        user = f"""Составь 10 вопросов для БЫСТРОЙ ДИАГНОСТИКИ по теме "{topic}".
+        Каждый вопрос затрагивает 2-3 сферы жизни.
+        Формат JSON:
+        [
+            {{
+                "question": "вопрос?",
+                "options": {{"A": "вариант 1", "B": "вариант 2", "C": "вариант 3", "D": "вариант 4"}},
+                "scores": {{"A": 0, "B": 1, "C": 2, "D": 3}}
+            }}
+        ]
+        Верни ТОЛЬКО JSON."""
+    else:
+        system = """Ты — клинический психолог с 25-летним стажем.
+        Проведи ПОЛНУЮ ДИАГНОСТИКУ личности.
+        20 вопросов, которые проникают вглубь.
+        Верни ТОЛЬКО JSON массив."""
+        
+        user = f"""Составь 20 ГЛУБИННЫХ вопросов для полного разбора по теме "{topic}".
+        Вопросы должны выявлять КОРЕНЬ проблемы.
+        Формат JSON:
+        [
+            {{
+                "question": "глубокий вопрос?",
+                "options": {{"A": "ответ 1", "B": "ответ 2", "C": "ответ 3", "D": "ответ 4"}},
+                "scores": {{"A": 0, "B": 1, "C": 2, "D": 3}}
+            }}
+        ]
+        Верни ТОЛЬКО JSON."""
+    
+    response = ask_giga(system, user, 4000)
+    if not response:
+        return None
+    
+    try:
+        start = response.find('[')
+        end = response.rfind(']') + 1
+        if start == -1 or end == -1:
+            return None
+        
+        questions = json.loads(response[start:end])
+        for q in questions:
+            if 'scores' not in q:
+                q['scores'] = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+        return questions[:count]
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+        return None
+
+# ============================================
+# ИДЕАЛЬНЫЙ ПРОМПТ ДЛЯ АНАЛИЗА (Б ВАРИАНТ)
+# ============================================
+
+def generate_analysis(topic, answers, score, total, is_paid):
+    if not is_paid:
+        system = """Ты — опытный психолог-диагност.
+        По результатам 10 вопросов определи ГЛАВНУЮ проблему человека.
+        
+        СТРУКТУРА:
+        1. ТОП-1 проблема
+        2. 1 МОЩНЫЙ ИНСАЙТ
+        3. 1 ВОПРОС ДЛЯ РАЗМЫШЛЕНИЯ
+        4. 1 КОНКРЕТНЫЙ ШАГ
+        
+        Объем: 600-800 знаков."""
+        
+        user = f"""ТЕМА: {topic}
+ОТВЕТЫ: {answers}
+БАЛЛЫ: {score} из {total}
+Определи главную проблему и дай ценный ответ."""
+    else:
+        system = """ТЫ - МЕЖДУНАРОДНАЯ КОМАНДА ЭКСПЕРТОВ:
+        1. Клинический психолог
+        2. Коуч
+        3. НЛП-терапевт
+        
+        СТРУКТУРА:
+        1. ПСИХОЛОГИЧЕСКИЙ ПОРТРЕТ
+        2. 2-3 ГЛУБИННЫХ ИНСАЙТА
+        3. КОРЕНЬ ПРОБЛЕМЫ
+        4. ПЛАН НА НЕДЕЛЮ (3 шага)
+        5. РЕКОМЕНДАЦИИ КНИГ (2 книги)
+        6. УПРАЖНЕНИЕ
+        7. ВИДЕО
+        
+        Объем: 1500+ знаков."""
+        
+        user = f"""ТЕМА: {topic}
+ОТВЕТЫ: {answers}
+БАЛЛЫ: {score} из {total}
+Проведи полный разбор личности."""
+    
+    response = ask_giga(system, user, 4000 if is_paid else 2500)
+    if response:
+        return response
+    return None
+
+# ============================================
 # TELEGRAM БОТ
 # ============================================
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# ============================================
+# ВЕБ-СЕРВЕР
+# ============================================
 
 app = Flask(__name__)
 
@@ -547,6 +438,10 @@ def run_flask():
     app.run(host='0.0.0.0', port=port, debug=False)
 
 threading.Thread(target=run_flask, daemon=True).start()
+
+# ============================================
+# МЕНЮ
+# ============================================
 
 def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -575,18 +470,11 @@ sessions = {}
 @bot.message_handler(commands=['start'])
 def start(message):
     chat_id = message.chat.id
-    welcome = """🌟 ДОБРО ПОЖАЛОВАТЬ В ПРОСТРАНСТВО ТРАНСФОРМАЦИИ!
+    welcome = """🌟 ДОБРО ПОЖАЛОВАТЬ!
 
-Я — твой проводник в мире осознанности и глубины.
+Я — твой проводник в мир осознанности.
 
-Здесь ты:
-• Откроешь в себе то, что скрыто
-• Получишь ответы, которых искал
-• Начнешь видеть свою уникальность
-
-Нажми «🎯 Пройти тест» — и начни исследование себя.
-«🎫 Активировать промокод» — если у тебя есть доступ к глубине."""
-
+Нажми «🎯 Пройти тест» — начни исследование себя."""
     bot.send_message(chat_id, welcome, reply_markup=get_main_menu(chat_id))
 
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
@@ -595,18 +483,9 @@ def start_button(message):
 
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
-    text = """💫 ЖИЗНЬ+ — пространство, где происходят трансформации.
-
-Мы не даем готовых ответов.
-Мы создаем пространство для твоих ОТКРЫТИЙ.
-
-Здесь ты встретишь:
-• Глубину, которая меняет
-• Мудрость, которая освобождает
-• Энергию, которая вдохновляет
+    text = """💫 ЖИЗНЬ+ — пространство трансформаций.
 
 Подпишись, чтобы не пропустить магию каждого дня."""
-    
     mk = telebot.types.InlineKeyboardMarkup()
     mk.add(telebot.types.InlineKeyboardButton(
         "📢 Перейти в канал",
@@ -618,9 +497,9 @@ def about_channel(message):
 def choose_test_type(message):
     bot.send_message(
         message.chat.id,
-        "🎯 ВЫБЕРИ ГЛУБИНУ ПОГРУЖЕНИЯ:\n\n"
-        "🧠 БЕСПЛАТНЫЙ — 10 вопросов (поверхностное сканирование)\n"
-        "💎 ПЛАТНЫЙ — 20 вопросов (полная диагностика личности)",
+        "🎯 ВЫБЕРИ ГЛУБИНУ:\n\n"
+        "🧠 БЕСПЛАТНЫЙ — 10 вопросов (диагностика)\n"
+        "💎 ПЛАТНЫЙ — 20 вопросов (полный разбор)",
         reply_markup=test_type_menu()
     )
 
@@ -644,12 +523,9 @@ def show_topics(message, test_type, count):
             callback_data=f"{test_type}_{topic}_{count}"
         ))
     mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
-    
     bot.send_message(
         message.chat.id,
-        f"🔮 ВЫБЕРИ СФЕРУ ИССЛЕДОВАНИЯ:\n\n"
-        f"Количество вопросов: {count}\n"
-        f"Время на тест: ~{count * 3} минут",
+        f"🔮 ВЫБЕРИ СФЕРУ:\n\nВопросов: {count}",
         reply_markup=mk
     )
 
@@ -660,9 +536,7 @@ def topic_callback(c):
         is_paid = test_type == 'paid'
         
         bot.edit_message_text(
-            "🌀 ГЕНЕРАЦИЯ ТЕСТА...\n\n"
-            "Создаю уникальные вопросы специально для тебя.\n"
-            "Это займет до 30 секунд — дыши глубоко.",
+            "🌀 ГЕНЕРАЦИЯ ТЕСТА...\n⏱ До 30 секунд",
             c.message.chat.id,
             c.message.message_id
         )
@@ -670,12 +544,7 @@ def topic_callback(c):
         questions = generate_test_questions(topic, int(count))
         
         if not questions:
-            bot.send_message(
-                c.message.chat.id,
-                "❌ Не удалось сгенерировать тест.\n"
-                "Возможно, вселенная готовит для тебя что-то другое.\n"
-                "Попробуй еще раз через минуту."
-            )
+            bot.send_message(c.message.chat.id, "❌ Ошибка. Попробуй позже.")
             return
         
         sessions[c.message.chat.id] = {
@@ -696,17 +565,13 @@ def topic_callback(c):
 @bot.callback_query_handler(func=lambda c: c.data == 'cancel')
 def cancel_callback(c):
     bot.delete_message(c.message.chat.id, c.message.message_id)
-    bot.send_message(
-        c.message.chat.id,
-        "❌ Отменено. Возвращаюсь в точку опоры.",
-        reply_markup=get_main_menu(c.message.chat.id)
-    )
+    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
     c.answer()
 
 def send_question(chat_id):
     s = sessions.get(chat_id)
     if not s:
-        bot.send_message(chat_id, "❌ Сессия не найдена. Начни заново.")
+        bot.send_message(chat_id, "❌ Сессия не найдена.")
         return
     
     if s['q'] >= len(s['questions']):
@@ -729,7 +594,7 @@ def send_question(chat_id):
 
 {q['question']}
 
-Выбери вариант ответа, который откликается больше всего:"""
+Выбери вариант ответа:"""
     
     bot.send_message(chat_id, message, reply_markup=mk)
 
@@ -738,12 +603,7 @@ def stop_test(message):
     chat_id = message.chat.id
     if chat_id in sessions:
         del sessions[chat_id]
-    bot.send_message(
-        chat_id,
-        "⏹ Тест прерван.\n"
-        "Ты всегда можешь вернуться, когда будешь готов.",
-        reply_markup=get_main_menu(chat_id)
-    )
+    bot.send_message(chat_id, "⏹ Тест прерван", reply_markup=get_main_menu(chat_id))
 
 @bot.message_handler(func=lambda m: m.text and m.text[0] in 'ABCD')
 def handle_answer(message):
@@ -780,25 +640,22 @@ def finish_test(chat_id):
         chat_id,
         f"📊 ТЕСТ ЗАВЕРШЕН!\n\n"
         f"✅ Результат: {score} из {total}\n"
-        f"⏳ Анализирую глубину твоей личности...\n"
-        f"Это займет до 30 секунд — прислушайся к себе."
+        f"⏳ Анализирую... До 30 секунд"
     )
     
     analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
     
     if analysis:
         if is_paid:
-            result = f"🔮 ГЛУБИННЫЙ АНАЛИЗ ЛИЧНОСТИ\n\n{analysis}"
+            result = f"🔮 ПОЛНЫЙ РАЗБОР ЛИЧНОСТИ\n\n{analysis}"
         else:
-            result = f"🔍 ИНСАЙТЫ И ОТКРЫТИЯ\n\n{analysis}"
+            result = f"🔍 ДИАГНОСТИКА\n\n{analysis}"
         
         bot.send_message(chat_id, result, reply_markup=get_main_menu(chat_id))
     else:
         bot.send_message(
             chat_id,
-            "❌ Не удалось сгенерировать анализ.\n"
-            "Но твои ответы уже начали процесс трансформации.\n"
-            "Попробуй еще раз позже.",
+            "❌ Не удалось сгенерировать анализ.\nПопробуй позже.",
             reply_markup=get_main_menu(chat_id)
         )
     
@@ -812,12 +669,7 @@ def finish_test(chat_id):
 def admin_panel(message):
     if message.chat.id not in ADMIN_IDS:
         return
-    bot.send_message(
-        message.chat.id,
-        "👑 АДМИН-ПАНЕЛЬ\n\n"
-        "Управляй контентом и трансформацией.",
-        reply_markup=admin_menu()
-    )
+    bot.send_message(message.chat.id, "👑 АДМИН-ПАНЕЛЬ", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
 def back_to_main_from_admin(message):
@@ -828,21 +680,11 @@ def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(
-        message.chat.id,
-        "🌀 ГЕНЕРАЦИЯ ИДЕАЛЬНОГО ПОСТА...\n\n"
-        "Создаю уникальный контент с максимальной глубиной.\n"
-        "Это займет до 30 секунд — создается магия."
-    )
-    
+    bot.send_message(message.chat.id, "🌀 ГЕНЕРАЦИЯ ПОСТА...\n⏱ До 30 секунд")
     text = generate_post()
     
     if not text:
-        bot.send_message(
-            message.chat.id,
-            "❌ Не удалось создать пост.\n"
-            "Вселенная готовит что-то особенное, попробуй позже."
-        )
+        bot.send_message(message.chat.id, "❌ Ошибка")
         return
     
     c.execute("INSERT INTO posts_history (content) VALUES (?)", (text,))
@@ -850,35 +692,22 @@ def admin_post(message):
     
     try:
         bot.send_message(CHANNEL_ID, text)
-        bot.send_message(
-            message.chat.id,
-            "✅ ПОСТ ОТПРАВЛЕН В КАНАЛ!\n\n"
-            "Еще одна трансформация началась.",
-            reply_markup=admin_menu()
-        )
+        bot.send_message(message.chat.id, "✅ ПОСТ ОТПРАВЛЕН!", reply_markup=admin_menu())
     except Exception as e:
-        bot.send_message(
-            message.chat.id,
-            f"❌ Ошибка отправки: {e}",
-            reply_markup=admin_menu()
-        )
+        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
 def admin_test(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(
-        message.chat.id,
-        "🌀 ГЕНЕРАЦИЯ ТЕСТА ДЛЯ КАНАЛА...\n"
-        "Создаю глубину для всех подписчиков."
-    )
+    bot.send_message(message.chat.id, "🌀 ГЕНЕРАЦИЯ ТЕСТА...")
     
     topic = random.choice(list(TEST_TOPICS.keys()))
     questions = generate_test_questions(topic, 10)
     
     if not questions:
-        bot.send_message(message.chat.id, "❌ Не удалось создать тест.")
+        bot.send_message(message.chat.id, "❌ Ошибка")
         return
     
     c.execute("INSERT INTO daily_tests (topic, questions, created_at) VALUES (?, ?, ?)",
@@ -889,21 +718,14 @@ def admin_test(message):
     bot_info = bot.get_me()
     test_url = f"https://t.me/{bot_info.username}?start=daily_{topic}_{test_id}"
     
-    test_text = f"""🔮 ЕЖЕДНЕВНЫЙ ТЕСТ: «{topic.title()}»
-
-Пройди исследование себя прямо сейчас.
-Узнай то, что скрыто от тебя.
+    test_text = f"""🔮 ТЕСТ: «{topic.title()}»
 
 🎯 {test_url}
 
-#жизньплюс #тест #психология"""
+#жизньплюс #тест"""
     
     bot.send_message(CHANNEL_ID, test_text)
-    bot.send_message(
-        message.chat.id,
-        "✅ Тест отправлен в канал!",
-        reply_markup=admin_menu()
-    )
+    bot.send_message(message.chat.id, "✅ ТЕСТ ОТПРАВЛЕН!", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: m.text == '📊 Статистика')
 def admin_stats(message):
@@ -919,15 +741,13 @@ def admin_stats(message):
     c.execute("SELECT COUNT(*) FROM posts_history")
     posts_count = c.fetchone()[0]
     
-    stats_text = f"""📊 СТАТИСТИКА ТРАНСФОРМАЦИЙ
+    stats_text = f"""📊 СТАТИСТИКА
 
-📝 Тестов в канале: {tests_count}
-📤 Постов создано: {posts_count}
-🧠 Бесплатных тестов: {stats_row[0] if stats_row else 0}
-💎 Платных тестов: {stats_row[1] if stats_row else 0}
-🎫 Промокодов активировано: {stats_row[2] if stats_row else 0}
-
-Каждая цифра — чья-то трансформация."""
+📝 Тестов: {tests_count}
+📤 Постов: {posts_count}
+🧠 Бесплатных: {stats_row[0] if stats_row else 0}
+💎 Платных: {stats_row[1] if stats_row else 0}
+🎫 Промокодов: {stats_row[2] if stats_row else 0}"""
     
     bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
 
@@ -936,11 +756,7 @@ def create_promo(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(
-        message.chat.id,
-        "🎫 СОЗДАНИЕ ПРОМОКОДА\n\n"
-        "Введи уникальный код (латиница, без пробелов):"
-    )
+    bot.send_message(message.chat.id, "🎫 ВВЕДИ КОД:")
     bot.register_next_step_handler(message, process_create_promo)
 
 def process_create_promo(message):
@@ -948,11 +764,11 @@ def process_create_promo(message):
     code = message.text.strip().upper()
     
     if code == "ОТМЕНА":
-        bot.send_message(chat_id, "❌ Отменено.")
+        bot.send_message(chat_id, "❌ Отменено")
         return
     
     if not code or len(code) < 3:
-        bot.send_message(chat_id, "❌ Минимум 3 символа.", reply_markup=admin_menu())
+        bot.send_message(chat_id, "❌ Минимум 3 символа", reply_markup=admin_menu())
         return
     
     try:
@@ -961,20 +777,17 @@ def process_create_promo(message):
         conn.commit()
         bot.send_message(
             chat_id,
-            f"✅ ПРОМОКОД СОЗДАН!\n\n"
-            f"📌 Код: `{code}`\n"
-            f"Дай доступ к глубине кому-то особенному.",
+            f"✅ ПРОМОКОД: `{code}`",
             reply_markup=admin_menu()
         )
     except sqlite3.IntegrityError:
-        bot.send_message(chat_id, "❌ Такой код уже существует.", reply_markup=admin_menu())
+        bot.send_message(chat_id, "❌ УЖЕ СУЩЕСТВУЕТ", reply_markup=admin_menu())
 
 @bot.message_handler(func=lambda m: m.text == '🎫 Активировать промокод')
 def activate_promo(message):
     bot.send_message(
         message.chat.id,
-        "🎫 ВВЕДИ ПРОМОКОД:\n\n"
-        "Код, который открывает глубину.",
+        "🎫 ВВЕДИ ПРОМОКОД:",
         reply_markup=telebot.types.ReplyKeyboardRemove()
     )
     bot.register_next_step_handler(message, process_promo)
@@ -987,23 +800,13 @@ def process_promo(message):
     row = c.fetchone()
     
     if not row:
-        bot.send_message(
-            chat_id,
-            "❌ Неверный код.\n"
-            "Возможно, это знак — продолжай путь.",
-            reply_markup=get_main_menu(chat_id)
-        )
+        bot.send_message(chat_id, "❌ НЕВЕРНЫЙ КОД", reply_markup=get_main_menu(chat_id))
         return
     
     promo_id, used_by = row
     
     if used_by != 0:
-        bot.send_message(
-            chat_id,
-            "❌ Этот код уже использован.\n"
-            "Время создавать свою магию.",
-            reply_markup=get_main_menu(chat_id)
-        )
+        bot.send_message(chat_id, "❌ УЖЕ ИСПОЛЬЗОВАН", reply_markup=get_main_menu(chat_id))
         return
     
     c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", 
@@ -1015,9 +818,7 @@ def process_promo(message):
     
     bot.send_message(
         chat_id,
-        "🎉 ПРОМОКОД АКТИВИРОВАН!\n\n"
-        "Теперь тебе открыт доступ к 💎 Платному тесту.\n"
-        "Готов к глубине?",
+        "🎉 ПРОМОКОД АКТИВИРОВАН!\n\nТеперь доступен платный тест!",
         reply_markup=get_main_menu(chat_id)
     )
 
@@ -1026,8 +827,10 @@ def process_promo(message):
 # ============================================
 
 def run_bot():
-    logger.info("🤖 Запуск трансформационного бота...")
+    logger.info("🤖 ЗАПУСК БОТА...")
     try:
+        # ЕЩЕ РАЗ УДАЛЯЕМ ВЕБХУК
+        kill_409_forever()
         bot.remove_webhook()
         bot.polling(none_stop=True, interval=0, timeout=20)
     except Exception as e:
