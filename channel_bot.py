@@ -29,7 +29,7 @@ ADMIN_IDS = [8746212340]
 AUTH_KEY = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjg2YzE3MTRiLTc0NzYtNDhiYS05YjZiLTk5MGRhZmFiYWNjOQ=="
 
 # Версия бота
-BOT_VERSION = "7.0.0"
+BOT_VERSION = "8.0.0"
 BOT_NAME = "Жизнь+ Трансформационный Бот"
 
 # Пути
@@ -197,6 +197,9 @@ def ask_giga(system, user, max_tokens=5000, retries=3):
     logger.info(f"📝 Система: {system[:100]}...")
     logger.info(f"📝 Запрос: {user[:100]}...")
     
+    if not user or len(user.strip()) == 0:
+        user = "Сделай запрос."
+    
     token = get_giga_token()
     if not token:
         logger.error("❌ НЕТ ТОКЕНА")
@@ -234,10 +237,9 @@ def ask_giga(system, user, max_tokens=5000, retries=3):
             logger.info(f"⏱ Ответ за {elapsed:.2f} сек")
             logger.info(f"📡 Статус: {response.status_code}")
             
-            # ⚠️ ГАРАНТИРОВАННОЕ ОЖИДАНИЕ 35 СЕКУНД
             if elapsed < 35:
                 wait_time = 35 - elapsed
-                logger.info(f"⏳ ОЖИДАНИЕ {wait_time:.1f} СЕКУНД (гарантия генерации)")
+                logger.info(f"⏳ ОЖИДАНИЕ {wait_time:.1f} СЕКУНД")
                 time.sleep(wait_time)
             
             if response.status_code == 200:
@@ -319,7 +321,6 @@ def init_database():
     
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
-    c.execute("PRAGMA foreign_keys = ON")
     
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         chat_id INTEGER PRIMARY KEY,
@@ -567,23 +568,20 @@ def show_logs(message):
         if chat_id not in ADMIN_IDS:
             return
         
-        # Читаем лог-файл
         if os.path.exists(LOG_PATH):
             with open(LOG_PATH, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
-                # Берем последние 50 строк
                 last_lines = lines[-50:] if len(lines) > 50 else lines
                 logs = ''.join(last_lines)
                 
-                # Если логов слишком много - обрезаем
                 if len(logs) > 4000:
                     logs = logs[-4000:]
                 
                 bot.send_message(chat_id, f"📋 ПОСЛЕДНИЕ 50 СТРОК ЛОГОВ:\n\n```\n{logs}\n```", parse_mode='Markdown')
         else:
-            bot.send_message(chat_id, "❌ Файл логов не найден. Бот еще не создал логов.")
+            bot.send_message(chat_id, "❌ Файл логов не найден.")
     except Exception as e:
-        bot.send_message(chat_id, f"❌ Ошибка при чтении логов: {e}")
+        bot.send_message(chat_id, f"❌ Ошибка: {e}")
 
 # ============================================
 # ОБРАБОТЧИКИ
@@ -591,10 +589,13 @@ def show_logs(message):
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    chat_id = message.chat.id
-    user = message.from_user
-    save_user(chat_id, user.username, user.first_name, user.last_name)
-    bot.send_message(chat_id, "🌟 Добро пожаловать!", reply_markup=get_main_menu(chat_id))
+    try:
+        chat_id = message.chat.id
+        user = message.from_user
+        save_user(chat_id, user.username, user.first_name, user.last_name)
+        bot.send_message(chat_id, "🌟 Добро пожаловать!", reply_markup=get_main_menu(chat_id))
+    except Exception as e:
+        logger.error(f"Ошибка в start: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
 def start_button(message):
@@ -602,13 +603,19 @@ def start_button(message):
 
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
-    mk = telebot.types.InlineKeyboardMarkup()
-    mk.add(telebot.types.InlineKeyboardButton("📢 Перейти в канал", url="https://t.me/zhizn_plus"))
-    bot.send_message(message.chat.id, "💫 ЖИЗНЬ+", reply_markup=mk)
+    try:
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("📢 Перейти в канал", url="https://t.me/zhizn_plus"))
+        bot.send_message(message.chat.id, "💫 ЖИЗНЬ+", reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def choose_test_type(message):
-    bot.send_message(message.chat.id, "🎯 Выбери тест:", reply_markup=test_type_menu())
+    try:
+        bot.send_message(message.chat.id, "🎯 Выбери тест:", reply_markup=test_type_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🔙 Назад')
 def back_to_main(message):
@@ -623,11 +630,14 @@ def paid_test(message):
     show_topics(message, 'paid', 20)
 
 def show_topics(message, test_type, count):
-    mk = telebot.types.InlineKeyboardMarkup(row_width=2)
-    for topic, emoji in TEST_TOPICS.items():
-        mk.add(telebot.types.InlineKeyboardButton(emoji, callback_data=f"{test_type}_{topic}_{count}"))
-    mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
-    bot.send_message(message.chat.id, f"🔮 Выбери тему:", reply_markup=mk)
+    try:
+        mk = telebot.types.InlineKeyboardMarkup(row_width=2)
+        for topic, emoji in TEST_TOPICS.items():
+            mk.add(telebot.types.InlineKeyboardButton(emoji, callback_data=f"{test_type}_{topic}_{count}"))
+        mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
+        bot.send_message(message.chat.id, f"🔮 Выбери тему:", reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith(('free', 'paid')))
 def topic_callback(c):
@@ -635,15 +645,15 @@ def topic_callback(c):
         test_type, topic, count = c.data.split('_')
         is_paid = test_type == 'paid'
         count = int(count)
+        chat_id = c.message.chat.id
         
-        bot.edit_message_text("⏳ Генерация теста...\n⏱ Ожидание до 35 сек", c.message.chat.id, c.message.message_id)
+        bot.edit_message_text("⏳ Генерация теста...\n⏱ Ожидание до 35 сек", chat_id, c.message.message_id)
         questions = generate_test_questions(topic, count)
         
         if not questions:
-            bot.send_message(c.message.chat.id, "❌ GigaChat не ответил. Попробуй позже.")
+            bot.send_message(chat_id, "❌ GigaChat не ответил. Попробуй позже.")
             return
         
-        chat_id = c.message.chat.id
         sessions[chat_id] = {
             'topic': topic,
             'questions': questions,
@@ -652,75 +662,103 @@ def topic_callback(c):
             'scores': [],
             'is_paid': is_paid
         }
-        bot.delete_message(c.message.chat.id, c.message.message_id)
+        
+        bot.delete_message(chat_id, c.message.message_id)
         send_question(chat_id)
     except Exception as e:
-        bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
+        logger.error(f"Ошибка: {e}")
+        try:
+            bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
+        except:
+            pass
     c.answer()
 
 @bot.callback_query_handler(func=lambda c: c.data == 'cancel')
 def cancel_callback(c):
-    bot.delete_message(c.message.chat.id, c.message.message_id)
-    bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
+    try:
+        bot.delete_message(c.message.chat.id, c.message.message_id)
+        bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
     c.answer()
 
 def send_question(chat_id):
-    s = sessions.get(chat_id)
-    if not s:
-        return
-    if s['q'] >= len(s['questions']):
-        finish_test(chat_id)
-        return
-    q = s['questions'][s['q']]
-    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    for opt, txt in q['options'].items():
-        mk.add(f"{opt}) {txt}")
-    mk.add('⏹ Прервать тест')
-    bot.send_message(chat_id, f"🔮 Вопрос {s['q']+1}/{len(s['questions'])}\n\n{q['question']}", reply_markup=mk)
+    try:
+        s = sessions.get(chat_id)
+        if not s:
+            bot.send_message(chat_id, "❌ Сессия не найдена.")
+            return
+        
+        if s['q'] >= len(s['questions']):
+            finish_test(chat_id)
+            return
+        
+        q = s['questions'][s['q']]
+        mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        for opt, txt in q['options'].items():
+            mk.add(f"{opt}) {txt}")
+        mk.add('⏹ Прервать тест')
+        
+        bot.send_message(chat_id, f"🔮 Вопрос {s['q']+1}/{len(s['questions'])}\n\n{q['question']}", reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '⏹ Прервать тест')
 def stop_test(message):
-    chat_id = message.chat.id
-    if chat_id in sessions:
-        del sessions[chat_id]
-    bot.send_message(chat_id, "⏹ Тест прерван", reply_markup=get_main_menu(chat_id))
+    try:
+        chat_id = message.chat.id
+        if chat_id in sessions:
+            del sessions[chat_id]
+        bot.send_message(chat_id, "⏹ Тест прерван", reply_markup=get_main_menu(chat_id))
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text and m.text[0] in 'ABCD')
 def handle_answer(message):
-    chat_id = message.chat.id
-    s = sessions.get(chat_id)
-    if not s or s['q'] >= len(s['questions']):
-        return
-    letter = message.text[0]
-    q = s['questions'][s['q']]
-    s['answers'].append(letter)
-    s['scores'].append(q['scores'][letter])
-    s['q'] += 1
-    send_question(chat_id)
+    try:
+        chat_id = message.chat.id
+        s = sessions.get(chat_id)
+        if not s or s['q'] >= len(s['questions']):
+            return
+        
+        letter = message.text[0]
+        q = s['questions'][s['q']]
+        s['answers'].append(letter)
+        s['scores'].append(q['scores'][letter])
+        s['q'] += 1
+        send_question(chat_id)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 def finish_test(chat_id):
-    s = sessions.get(chat_id)
-    if not s:
-        return
-    score = sum(s['scores'])
-    total = len(s['questions']) * 3
-    answers = ', '.join(s['answers'])
-    is_paid = s.get('is_paid', False)
-    
-    if is_paid:
-        c.execute("UPDATE stats SET paid_count = paid_count + 1")
-    else:
-        c.execute("UPDATE stats SET free_count = free_count + 1")
-    conn.commit()
-    
-    bot.send_message(chat_id, f"📊 Тест завершен!\nРезультат: {score} из {total}\n⏳ Анализирую...\n⏱ Ожидание до 35 сек")
-    analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
-    
-    if analysis:
-        bot.send_message(chat_id, f"🔍 АНАЛИЗ\n\n{analysis}", reply_markup=get_main_menu(chat_id))
-    else:
-        bot.send_message(chat_id, "❌ GigaChat не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
-    del sessions[chat_id]
+    try:
+        s = sessions.get(chat_id)
+        if not s:
+            return
+        
+        score = sum(s['scores'])
+        total = len(s['questions']) * 3
+        answers = ', '.join(s['answers'])
+        is_paid = s.get('is_paid', False)
+        
+        if is_paid:
+            c.execute("UPDATE stats SET paid_count = paid_count + 1")
+        else:
+            c.execute("UPDATE stats SET free_count = free_count + 1")
+        conn.commit()
+        
+        bot.send_message(chat_id, f"📊 Тест завершен!\nРезультат: {score} из {total}\n⏳ Анализирую...\n⏱ Ожидание до 35 сек")
+        analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
+        
+        if analysis:
+            bot.send_message(chat_id, f"🔍 АНАЛИЗ\n\n{analysis}", reply_markup=get_main_menu(chat_id))
+        else:
+            bot.send_message(chat_id, "❌ GigaChat не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
+        
+        if chat_id in sessions:
+            del sessions[chat_id]
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 # ============================================
 # АДМИН-ПАНЕЛЬ
@@ -728,9 +766,12 @@ def finish_test(chat_id):
 
 @bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
 def admin_panel(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
 def back_to_main_from_admin(message):
@@ -738,165 +779,192 @@ def back_to_main_from_admin(message):
 
 @bot.message_handler(func=lambda m: m.text == '📤 Отправить пост')
 def admin_post(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    
-    bot.send_message(message.chat.id, "⏳ Генерация поста...\n⏱ Ожидание до 35 сек")
-    post, theme = generate_post()
-    
-    if not post:
-        bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
-        return
-    
     try:
-        c.execute("INSERT INTO posts_history (content, topic) VALUES (?, ?)", (post, theme))
-        conn.commit()
-        c.execute("UPDATE stats SET posts_count = posts_count + 1")
-        conn.commit()
-    except:
-        pass
-    
-    try:
-        bot.send_message(CHANNEL_ID, post)
-        bot.send_message(message.chat.id, "✅ Пост отправлен!", reply_markup=admin_menu())
+        if message.chat.id not in ADMIN_IDS:
+            return
+        
+        bot.send_message(message.chat.id, "⏳ Генерация поста...\n⏱ Ожидание до 35 сек")
+        post, theme = generate_post()
+        
+        if not post:
+            bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
+            return
+        
+        try:
+            c.execute("INSERT INTO posts_history (content, topic) VALUES (?, ?)", (post, theme))
+            conn.commit()
+            c.execute("UPDATE stats SET posts_count = posts_count + 1")
+            conn.commit()
+        except:
+            pass
+        
+        try:
+            bot.send_message(CHANNEL_ID, post)
+            bot.send_message(message.chat.id, "✅ Пост отправлен!", reply_markup=admin_menu())
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🖼 Пост с картинкой')
 def admin_post_with_image(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    
-    bot.send_message(message.chat.id, "⏳ Генерация поста и картинки...\n⏱ Ожидание до 60 сек")
-    post, theme = generate_post()
-    
-    if not post:
-        bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
-        return
-    
-    image_path = generate_post_image(theme)
-    
     try:
-        c.execute("INSERT INTO posts_history (content, topic, image_path) VALUES (?, ?, ?)", 
-                  (post, theme, image_path if image_path else ""))
-        conn.commit()
-        c.execute("UPDATE stats SET posts_count = posts_count + 1")
-        if image_path:
-            c.execute("UPDATE stats SET images_generated = images_generated + 1")
-        conn.commit()
-    except:
-        pass
-    
-    try:
-        if image_path:
-            with open(image_path, 'rb') as photo:
-                bot.send_photo(CHANNEL_ID, photo, caption=post)
-            os.remove(image_path)
-        else:
-            bot.send_message(CHANNEL_ID, post)
-        bot.send_message(message.chat.id, "✅ Пост с картинкой отправлен!", reply_markup=admin_menu())
+        if message.chat.id not in ADMIN_IDS:
+            return
+        
+        bot.send_message(message.chat.id, "⏳ Генерация поста и картинки...\n⏱ Ожидание до 60 сек")
+        post, theme = generate_post()
+        
+        if not post:
+            bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
+            return
+        
+        image_path = generate_post_image(theme)
+        
+        try:
+            c.execute("INSERT INTO posts_history (content, topic, image_path) VALUES (?, ?, ?)", 
+                      (post, theme, image_path if image_path else ""))
+            conn.commit()
+            c.execute("UPDATE stats SET posts_count = posts_count + 1")
+            if image_path:
+                c.execute("UPDATE stats SET images_generated = images_generated + 1")
+            conn.commit()
+        except:
+            pass
+        
+        try:
+            if image_path:
+                with open(image_path, 'rb') as photo:
+                    bot.send_photo(CHANNEL_ID, photo, caption=post)
+                os.remove(image_path)
+            else:
+                bot.send_message(CHANNEL_ID, post)
+            bot.send_message(message.chat.id, "✅ Пост с картинкой отправлен!", reply_markup=admin_menu())
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
 def admin_test_to_channel(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    bot.send_message(message.chat.id, "⏳ Генерация теста...\n⏱ Ожидание до 35 сек")
-    
-    topic = random.choice(list(TEST_TOPICS.keys()))
-    questions = generate_test_questions(topic, 10)
-    
-    if not questions:
-        bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
-        return
-    
-    image_path = generate_test_image(topic)
-    
     try:
-        c.execute("INSERT INTO daily_tests (topic, questions, created_at, is_paid, image_path) VALUES (?, ?, ?, ?, ?)",
-                  (topic, json.dumps(questions), datetime.now().isoformat(), 0, image_path if image_path else ""))
-        conn.commit()
-        test_id = c.lastrowid
-        c.execute("UPDATE stats SET tests_created = tests_created + 1")
-        if image_path:
-            c.execute("UPDATE stats SET images_generated = images_generated + 1")
-        conn.commit()
-    except:
-        test_id = int(time.time())
-    
-    bot_info = bot.get_me()
-    test_url = f"https://t.me/{bot_info.username}?start=daily_{topic}_{test_id}"
-    test_text = f"🔮 Тест: «{topic.title()}»\n\nПройти: {test_url}"
-    
-    try:
-        if image_path:
-            with open(image_path, 'rb') as photo:
-                bot.send_photo(CHANNEL_ID, photo, caption=test_text)
-            os.remove(image_path)
-        else:
-            bot.send_message(CHANNEL_ID, test_text)
-        bot.send_message(message.chat.id, "✅ Тест отправлен!", reply_markup=admin_menu())
+        if message.chat.id not in ADMIN_IDS:
+            return
+        
+        bot.send_message(message.chat.id, "⏳ Генерация теста...\n⏱ Ожидание до 35 сек")
+        
+        topic = random.choice(list(TEST_TOPICS.keys()))
+        questions = generate_test_questions(topic, 10)
+        
+        if not questions:
+            bot.send_message(message.chat.id, "❌ GigaChat не ответил. Проверь логи (кнопка 📋 Логи).", reply_markup=admin_menu())
+            return
+        
+        image_path = generate_test_image(topic)
+        
+        try:
+            c.execute("INSERT INTO daily_tests (topic, questions, created_at, is_paid, image_path) VALUES (?, ?, ?, ?, ?)",
+                      (topic, json.dumps(questions), datetime.now().isoformat(), 0, image_path if image_path else ""))
+            conn.commit()
+            test_id = c.lastrowid
+            c.execute("UPDATE stats SET tests_created = tests_created + 1")
+            if image_path:
+                c.execute("UPDATE stats SET images_generated = images_generated + 1")
+            conn.commit()
+        except:
+            test_id = int(time.time())
+        
+        bot_info = bot.get_me()
+        test_url = f"https://t.me/{bot_info.username}?start=daily_{topic}_{test_id}"
+        test_text = f"🔮 Тест: «{topic.title()}»\n\nПройти: {test_url}"
+        
+        try:
+            if image_path:
+                with open(image_path, 'rb') as photo:
+                    bot.send_photo(CHANNEL_ID, photo, caption=test_text)
+                os.remove(image_path)
+            else:
+                bot.send_message(CHANNEL_ID, test_text)
+            bot.send_message(message.chat.id, "✅ Тест отправлен!", reply_markup=admin_menu())
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '📊 Статистика')
 def admin_stats(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    c.execute("SELECT free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated FROM stats")
-    stats_row = c.fetchone()
-    c.execute("SELECT COUNT(*) FROM users")
-    users_count = c.fetchone()[0]
-    stats_text = f"📊 Статистика\n\n👥 Пользователей: {users_count}\n🧠 Бесплатных: {stats_row[0] if stats_row else 0}\n💎 Платных: {stats_row[1] if stats_row else 0}\n🎫 Промокодов: {stats_row[2] if stats_row else 0}\n📤 Постов: {stats_row[4] if stats_row else 0}\n🖼 Картинок: {stats_row[6] if stats_row else 0}"
-    bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        
+        c.execute("SELECT free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated FROM stats")
+        stats_row = c.fetchone()
+        c.execute("SELECT COUNT(*) FROM users")
+        users_count = c.fetchone()[0]
+        
+        stats_text = f"📊 Статистика\n\n👥 Пользователей: {users_count}\n🧠 Бесплатных: {stats_row[0] if stats_row else 0}\n💎 Платных: {stats_row[1] if stats_row else 0}\n🎫 Промокодов: {stats_row[2] if stats_row else 0}\n📤 Постов: {stats_row[4] if stats_row else 0}\n🖼 Картинок: {stats_row[6] if stats_row else 0}"
+        bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🎫 Создать промокод')
 def create_promo(message):
-    if message.chat.id not in ADMIN_IDS:
-        return
-    bot.send_message(message.chat.id, "🎫 Введите код (латиница, 3+ символов):")
-    bot.register_next_step_handler(message, process_create_promo)
+    try:
+        if message.chat.id not in ADMIN_IDS:
+            return
+        bot.send_message(message.chat.id, "🎫 Введите код (латиница, 3+ символов):")
+        bot.register_next_step_handler(message, process_create_promo)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 def process_create_promo(message):
-    chat_id = message.chat.id
-    code = message.text.strip().upper()
-    if code == "ОТМЕНА":
-        bot.send_message(chat_id, "❌ Отменено")
-        return
-    if not code or len(code) < 3:
-        bot.send_message(chat_id, "❌ Минимум 3 символа", reply_markup=admin_menu())
-        return
     try:
-        c.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
-                  (code, chat_id, datetime.now().isoformat()))
-        conn.commit()
-        bot.send_message(chat_id, f"✅ Промокод: `{code}`", reply_markup=admin_menu())
-    except sqlite3.IntegrityError:
-        bot.send_message(chat_id, "❌ Уже существует", reply_markup=admin_menu())
+        chat_id = message.chat.id
+        code = message.text.strip().upper()
+        if code == "ОТМЕНА":
+            bot.send_message(chat_id, "❌ Отменено")
+            return
+        if not code or len(code) < 3:
+            bot.send_message(chat_id, "❌ Минимум 3 символа", reply_markup=admin_menu())
+            return
+        try:
+            c.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
+                      (code, chat_id, datetime.now().isoformat()))
+            conn.commit()
+            bot.send_message(chat_id, f"✅ Промокод: `{code}`", reply_markup=admin_menu())
+        except sqlite3.IntegrityError:
+            bot.send_message(chat_id, "❌ Уже существует", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🎫 Активировать промокод')
 def activate_promo(message):
-    bot.send_message(message.chat.id, "🎫 Введите промокод:", reply_markup=telebot.types.ReplyKeyboardRemove())
-    bot.register_next_step_handler(message, process_promo)
+    try:
+        bot.send_message(message.chat.id, "🎫 Введите промокод:", reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(message, process_promo)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 def process_promo(message):
-    chat_id = message.chat.id
-    code = message.text.strip().upper()
-    c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
-    row = c.fetchone()
-    if not row:
-        bot.send_message(chat_id, "❌ Неверный код", reply_markup=get_main_menu(chat_id))
-        return
-    promo_id, used_by = row
-    if used_by != 0:
-        bot.send_message(chat_id, "❌ Уже использован", reply_markup=get_main_menu(chat_id))
-        return
-    c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", (chat_id, datetime.now().isoformat(), promo_id))
-    conn.commit()
-    c.execute("UPDATE stats SET promo_used = promo_used + 1")
-    conn.commit()
-    bot.send_message(chat_id, "🎉 Промокод активирован!", reply_markup=get_main_menu(chat_id))
+    try:
+        chat_id = message.chat.id
+        code = message.text.strip().upper()
+        c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
+        row = c.fetchone()
+        if not row:
+            bot.send_message(chat_id, "❌ Неверный код", reply_markup=get_main_menu(chat_id))
+            return
+        promo_id, used_by = row
+        if used_by != 0:
+            bot.send_message(chat_id, "❌ Уже использован", reply_markup=get_main_menu(chat_id))
+            return
+        c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", (chat_id, datetime.now().isoformat(), promo_id))
+        conn.commit()
+        c.execute("UPDATE stats SET promo_used = promo_used + 1")
+        conn.commit()
+        bot.send_message(chat_id, "🎉 Промокод активирован!", reply_markup=get_main_menu(chat_id))
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 # ============================================
 # ЗАПУСК БОТА
