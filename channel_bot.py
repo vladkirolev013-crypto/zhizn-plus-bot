@@ -24,11 +24,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
+PROVIDER_TOKEN = ""  # Токен для Telegram Stars (получить у @BotFather)
 
 TIMEZONE = ZoneInfo("Asia/Novokuznetsk")  # Юрга UTC+7
 
-BOT_VERSION = "6.0.0"
-BOT_NAME = "Жизнь+ Про (AI Switch)"
+BOT_VERSION = "7.0.0"
+BOT_NAME = "Жизнь+ Про (AI Switch + Payments)"
 
 DB_PATH = 'channel.db'
 LOG_PATH = 'bot_logs.txt'
@@ -42,6 +43,13 @@ CHANNEL_THEMES = [
     "мотивация",
     "саморазвитие"
 ]
+
+# ============================================================
+# ЦЕНЫ В ЗВЁЗДАХ
+# ============================================================
+
+PRICE_TEST_20 = 50   # 20 вопросов — 50 Stars (~75 ₽)
+PRICE_COACH = 100    # Коуч-сеанс — 100 Stars (~150 ₽)
 
 # ============================================================
 # СПИСОК AI-ПРОВАЙДЕРОВ (АВТОПЕРЕКЛЮЧЕНИЕ)
@@ -129,8 +137,6 @@ for i in range(3):
 # ============================================================
 
 def ask_ai(system, user, max_tokens=3000, retries=2):
-    """Запрос к AI с автоматическим переключением между провайдерами"""
-    
     if not user or len(user.strip()) == 0:
         user = "Сделай запрос."
     
@@ -144,9 +150,7 @@ def ask_ai(system, user, max_tokens=3000, retries=2):
             try:
                 logger.info(f"🔄 Провайдер: {provider['name']}, попытка {attempt+1}/{retries}")
                 
-                headers = {
-                    "Content-Type": "application/json"
-                }
+                headers = {"Content-Type": "application/json"}
                 if provider.get("api_key"):
                     headers["Authorization"] = f"Bearer {provider['api_key']}"
                 
@@ -224,13 +228,20 @@ def generate_post_image(theme):
     ]
     return generate_image(random.choice(prompts))
 
+def generate_result_image(text, result):
+    """Генерация картинки для результата теста"""
+    prompt = f"minimalist psychology illustration, {text}, {result}, inspirational, soft colors, self discovery"
+    return generate_image(prompt)
+
 # ============================================================
-# БАЗА ДАННЫХ
+# БАЗА ДАННЫХ (РАСШИРЕННАЯ)
 # ============================================================
 
 def init_database():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
+    
+    # Пользователи
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         chat_id INTEGER PRIMARY KEY,
         username TEXT,
@@ -239,23 +250,41 @@ def init_database():
         registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         tests_passed INTEGER DEFAULT 0,
         consultations INTEGER DEFAULT 0,
-        last_activity TIMESTAMP
+        last_activity TIMESTAMP,
+        referrer_id INTEGER DEFAULT 0,
+        referral_code TEXT UNIQUE,
+        bonus_tests INTEGER DEFAULT 0
     )''')
+    
+    # Рефералы
+    c.execute('''CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_id INTEGER,
+        referred_id INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
+    # Статистика
     c.execute('''CREATE TABLE IF NOT EXISTS stats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         free_count INTEGER DEFAULT 0,
-        paid_count INTEGER DEFAULT 0,
+        paid_test_count INTEGER DEFAULT 0,
+        coach_count INTEGER DEFAULT 0,
         promo_used INTEGER DEFAULT 0,
         users_count INTEGER DEFAULT 0,
         posts_count INTEGER DEFAULT 0,
         tests_created INTEGER DEFAULT 0,
         images_generated INTEGER DEFAULT 0,
         consultations_count INTEGER DEFAULT 0,
+        referrals_count INTEGER DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    
     c.execute("SELECT COUNT(*) FROM stats")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO stats (free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count) VALUES (0, 0, 0, 0, 0, 0, 0, 0)")
+        c.execute("INSERT INTO stats (free_count, paid_test_count, coach_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count, referrals_count) VALUES (0, 0, 0, 0, 0, 0, 0, 0, 0, 0)")
+    
+    # Сеансы
     c.execute('''CREATE TABLE IF NOT EXISTS consultation_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         chat_id INTEGER,
@@ -263,9 +292,12 @@ def init_database():
         answers TEXT,
         current_q INTEGER DEFAULT 0,
         is_active INTEGER DEFAULT 1,
+        is_paid INTEGER DEFAULT 0,
         is_analyzed INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    
+    # История консультаций
     c.execute('''CREATE TABLE IF NOT EXISTS consultation_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         chat_id INTEGER,
@@ -275,6 +307,18 @@ def init_database():
         analysis TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    
+    # Платежи
+    c.execute('''CREATE TABLE IF NOT EXISTS payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER,
+        amount INTEGER,
+        product TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    
+    # Промокоды
     c.execute('''CREATE TABLE IF NOT EXISTS promocodes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE,
@@ -283,6 +327,8 @@ def init_database():
         used_by INTEGER DEFAULT 0,
         used_at TIMESTAMP
     )''')
+    
+    # Посты
     c.execute('''CREATE TABLE IF NOT EXISTS posts_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         content TEXT,
@@ -290,6 +336,8 @@ def init_database():
         image_path TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    
+    # Тесты
     c.execute('''CREATE TABLE IF NOT EXISTS daily_tests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         topic TEXT,
@@ -298,11 +346,15 @@ def init_database():
         is_paid INTEGER DEFAULT 0,
         message_id INTEGER DEFAULT 0
     )''')
+    
+    # Темы
     c.execute('''CREATE TABLE IF NOT EXISTS used_topics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         topic TEXT UNIQUE,
         used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    
+    # Подарки
     c.execute('''CREATE TABLE IF NOT EXISTS gifts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE,
@@ -313,7 +365,7 @@ def init_database():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
-    # Таблица для чек-инов (напоминаний через 3 дня)
+    # Чек-ины
     c.execute('''CREATE TABLE IF NOT EXISTS checkins (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         chat_id INTEGER,
@@ -341,7 +393,6 @@ def generate_post(topic):
     return ask_ai(system, user, 3000)
 
 def generate_test_questions(topic, count=10):
-    """Генерация теста (только вопросы, без картинок)"""
     if count == 10:
         depth = "диагностика личности"
     else:
@@ -396,7 +447,6 @@ def generate_analysis(topic, answers, score, total, is_paid):
     return ask_ai(system, user, 4000 if is_paid else 2000)
 
 def generate_consultation_questions():
-    """Генерация НЛП-вопросов для сеанса коучинга (простые, но мощные)"""
     system = """ТЫ — ВЕДУЩИЙ ПСИХОЛОГ-НЛП-ПРАКТИК.
 
     Составь 25 вопросов для сеанса психотерапии.
@@ -405,9 +455,8 @@ def generate_consultation_questions():
     - Вопросы должны быть ПРОСТЫМИ по форме (понятны 12-летнему)
     - Но МОЩНЫМИ по смыслу (бьют в точку)
     - БЕЗ психологических терминов
-    - Используй НЛП-техники: пресуппозиции, якоря, метамодель
-    - Пример: "Что ты чувствуешь, когда думаешь об этом?" вместо "Какие эмоции активируются?"
-    - Пример: "Кто из твоего прошлого говорит с тобой этим голосом?" вместо "Какой объект привязанности?"
+    - Используй НЛП-техники
+    - Пример: "Что ты чувствуешь, когда думаешь об этом?"
 
     Верни ТОЛЬКО JSON.
     Формат: [{"question": "простой, но сильный вопрос?"}]
@@ -442,7 +491,7 @@ def generate_consultation_analysis(answers, chat_id, session_id):
             c.execute("UPDATE stats SET consultations_count = consultations_count + 1")
             conn.commit()
             
-            # Добавляем чек-ин через 3 дня
+            # Чек-ин через 3 дня
             checkin_date = datetime.now() + timedelta(days=3)
             c.execute("""INSERT INTO checkins (chat_id, session_id, checkin_date) VALUES (?, ?, ?)""",
                       (chat_id, session_id, checkin_date.isoformat()))
@@ -454,7 +503,158 @@ def generate_consultation_analysis(answers, chat_id, session_id):
     return None
 
 # ============================================================
-# ПЛАНИРОВЩИК (С ЧЕК-ИНАМИ)
+# РЕФЕРАЛЬНАЯ СИСТЕМА
+# ============================================================
+
+def generate_referral_code(chat_id):
+    """Генерация уникального реферального кода"""
+    code = f"REF{chat_id}{random.randint(1000,9999)}"
+    return code[:10]
+
+def get_referral_link(chat_id):
+    """Получение реферальной ссылки"""
+    c.execute("SELECT referral_code FROM users WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
+    if row and row[0]:
+        code = row[0]
+    else:
+        code = generate_referral_code(chat_id)
+        c.execute("UPDATE users SET referral_code = ? WHERE chat_id = ?", (code, chat_id))
+        conn.commit()
+    bot_info = bot.get_me()
+    return f"https://t.me/{bot_info.username}?start=ref_{code}"
+
+def process_referral(referral_code, new_user_id):
+    """Обработка реферального перехода"""
+    c.execute("SELECT chat_id FROM users WHERE referral_code = ?", (referral_code,))
+    row = c.fetchone()
+    if row:
+        referrer_id = row[0]
+        if referrer_id != new_user_id:
+            # Проверяем, не было ли уже реферала
+            c.execute("SELECT id FROM referrals WHERE referrer_id = ? AND referred_id = ?", (referrer_id, new_user_id))
+            if not c.fetchone():
+                c.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, new_user_id))
+                conn.commit()
+                c.execute("UPDATE stats SET referrals_count = referrals_count + 1")
+                conn.commit()
+                
+                # Даём бонус: бесплатный тест из 20 вопросов
+                c.execute("UPDATE users SET bonus_tests = bonus_tests + 1 WHERE chat_id = ?", (referrer_id,))
+                conn.commit()
+                
+                # Уведомляем реферера
+                try:
+                    bot.send_message(referrer_id, 
+                        "🎉 По твоей ссылке пришёл новый пользователь!\n"
+                        "Ты получил БЕСПЛАТНЫЙ тест из 20 вопросов в подарок.\n"
+                        "Нажми «🎯 Пройти тест» и выбери платный тест — он будет бесплатным!")
+                except:
+                    pass
+                
+                return True
+    return False
+
+# ============================================================
+# ПЛАТЕЖИ ЧЕРЕЗ TELEGRAM STARS
+# ============================================================
+
+def create_invoice(chat_id, product, amount):
+    """Создание счёта для оплаты"""
+    if product == "test_20":
+        title = "Тест из 20 вопросов"
+        description = "Полный психологический разбор личности"
+        payload = "test_20"
+    elif product == "coach":
+        title = "Коуч-сеанс"
+        description = "25 вопросов + полный разбор + план действий"
+        payload = "coach"
+    else:
+        return None
+    
+    # Формируем инвойс
+    invoice = {
+        "chat_id": chat_id,
+        "title": title,
+        "description": description,
+        "payload": payload,
+        "provider_token": PROVIDER_TOKEN,
+        "currency": "XTR",  # Telegram Stars
+        "prices": [{"label": title, "amount": amount}]
+    }
+    return invoice
+
+def send_invoice(chat_id, product, amount):
+    """Отправка счёта пользователю"""
+    if product == "test_20":
+        title = "🧠 Тест из 20 вопросов"
+        desc = "Полный психологический разбор личности. Результат через 30 секунд."
+    elif product == "coach":
+        title = "🎯 Коуч-сеанс"
+        desc = "25 вопросов + полный разбор + план действий + задания на неделю."
+    else:
+        return
+    
+    # Используем send_invoice
+    try:
+        bot.send_invoice(
+            chat_id=chat_id,
+            title=title,
+            description=desc,
+            provider_token=PROVIDER_TOKEN,
+            currency="XTR",
+            prices=[{"label": title, "amount": amount}],
+            invoice_payload=product,
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка отправки инвойса: {e}")
+        return False
+
+# Обработчик предоплаты
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def handle_pre_checkout(query):
+    try:
+        bot.answer_pre_checkout_query(query.id, ok=True)
+    except Exception as e:
+        logger.error(f"Ошибка pre_checkout: {e}")
+        bot.answer_pre_checkout_query(query.id, ok=False, error_message="Ошибка оплаты")
+
+# Обработчик успешной оплаты
+@bot.message_handler(content_types=['successful_payment'])
+def handle_successful_payment(message):
+    try:
+        chat_id = message.chat.id
+        payment = message.successful_payment
+        product = payment.invoice_payload
+        
+        # Сохраняем платёж
+        c.execute("""INSERT INTO payments (chat_id, amount, product, status) VALUES (?, ?, ?, ?)""",
+                  (chat_id, payment.total_amount, product, "completed"))
+        conn.commit()
+        
+        if product == "test_20":
+            # Активируем платный тест
+            c.execute("UPDATE stats SET paid_test_count = paid_test_count + 1")
+            conn.commit()
+            bot.send_message(chat_id, "✅ Оплата прошла успешно!\n\nТы можешь пройти полный тест из 20 вопросов.\nНажми «🎯 Пройти тест» и выбери «💎 Платный».")
+            
+        elif product == "coach":
+            # Активируем коуч-сеанс
+            c.execute("UPDATE stats SET coach_count = coach_count + 1")
+            conn.commit()
+            bot.send_message(chat_id, "✅ Оплата прошла успешно!\n\nТы можешь пройти коуч-сеанс.\nНажми «👑 Админ-панель» → «🎯 Сеанс коучинга».")
+            
+    except Exception as e:
+        logger.error(f"Ошибка обработки оплаты: {e}")
+
+# ============================================================
+# ПЛАНИРОВЩИК
 # ============================================================
 
 def get_schedule():
@@ -478,7 +678,7 @@ def get_schedule():
         topic = random.choice(CHANNEL_THEMES)
         tasks.append({"type": "test", "topic": topic, "count": 10, "is_paid": False})
     
-    # Проверка чек-инов (раз в час)
+    # Чек-ины
     if now.minute == 0:
         c.execute("""SELECT chat_id, session_id FROM checkins 
                      WHERE is_done = 0 AND checkin_date <= ?""", 
@@ -560,7 +760,7 @@ def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🚀 Старт', '🎯 Пройти тест')
     mk.add('🎫 Активировать промокод', '🎁 Активировать подарок')
-    mk.add('❤️ О канале')
+    mk.add('📤 Поделиться', '❤️ О канале')
     if chat_id in ADMIN_IDS:
         mk.add('👑 Админ-панель')
     return mk
@@ -577,7 +777,7 @@ def admin_menu():
 def test_type_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🧠 Бесплатный (10 вопросов)')
-    mk.add('💎 Платный (20 вопросов)')
+    mk.add('💎 Платный (20 вопросов) — 50 ₽')
     mk.add('🔙 Назад')
     return mk
 
@@ -612,8 +812,9 @@ consultations = {}
 
 def save_user(chat_id, username=None, first_name=None, last_name=None):
     try:
-        c.execute("INSERT OR IGNORE INTO users (chat_id, username, first_name, last_name) VALUES (?, ?, ?, ?)",
-                  (chat_id, username, first_name, last_name))
+        c.execute("""INSERT OR IGNORE INTO users (chat_id, username, first_name, last_name, referral_code) 
+                     VALUES (?, ?, ?, ?, ?)""",
+                  (chat_id, username, first_name, last_name, generate_referral_code(chat_id)))
         conn.commit()
         c.execute("UPDATE stats SET users_count = (SELECT COUNT(*) FROM users)")
         conn.commit()
@@ -630,6 +831,14 @@ def start(message):
         chat_id = message.chat.id
         user = message.from_user
         save_user(chat_id, user.username, user.first_name, user.last_name)
+        
+        # Обработка реферальной ссылки
+        if ' ' in message.text:
+            param = message.text.split(' ', 1)[1]
+            if param.startswith('ref_'):
+                referral_code = param.replace('ref_', '')
+                process_referral(referral_code, chat_id)
+        
         bot.send_message(chat_id, "🌟 Добро пожаловать в Жизнь+!", reply_markup=get_main_menu(chat_id))
     except Exception as e:
         logger.error(f"Ошибка в start: {e}")
@@ -637,6 +846,34 @@ def start(message):
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
 def start_button(message):
     start(message)
+
+@bot.message_handler(func=lambda m: m.text == '📤 Поделиться')
+def share_result(message):
+    try:
+        chat_id = message.chat.id
+        referral_link = get_referral_link(chat_id)
+        
+        # Генерируем картинку
+        image_path = generate_result_image("Жизнь+", "Трансформация начинается здесь")
+        
+        text = f"""🧠 Я прохожу тесты в боте Жизнь+ и узнаю о себе новое.
+
+Присоединяйся — это честно, глубоко и без пафоса.
+
+🎯 Пройти тест: {referral_link}
+
+#жизньплюс #психология #саморазвитие"""
+        
+        if image_path:
+            with open(image_path, 'rb') as photo:
+                bot.send_photo(chat_id, photo, caption=text)
+            os.remove(image_path)
+        else:
+            bot.send_message(chat_id, text)
+        
+        bot.send_message(chat_id, "✅ Поделился! Спасибо, что помогаешь другим найти себя.")
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
@@ -657,22 +894,14 @@ def about_channel(message):
 — сеансы, которые работают глубже, чем ты готов
 
 Автор — не психолог, не коуч.
-Он — человек, который прошёл через своё дерьмо и решил:
-«Хватит врать себе».
+Он — человек, который прошёл через своё дерьмо.
 
 Он говорит с тобой как с равным.
 Без ролей. Без масок. Без «я тебя научу».
 
-Это канал для тех, кто устал от пустоты.
-Для тех, кто готов смотреть в себя.
-Для тех, кто хочет не казаться, а быть.
+Подписывайся. Испытай на прочность свою честность.
 
-Подписывайся.
-Испытай на прочность свою честность.
-
-@zhizn_plus
-
-#жизньплюс #осознанность #безпафоса"""
+@zhizn_plus"""
         
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton("📢 Перейти в канал", url="https://t.me/zhizn_plus"))
@@ -683,7 +912,19 @@ def about_channel(message):
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def choose_test_type(message):
     try:
-        bot.send_message(message.chat.id, "🎯 Выбери тест:", reply_markup=test_type_menu())
+        chat_id = message.chat.id
+        
+        # Проверяем, есть ли бонусный тест
+        c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
+        row = c.fetchone()
+        if row and row[0] > 0:
+            mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+            mk.add('🧠 Бесплатный (10 вопросов)')
+            mk.add('💎 Платный (20 вопросов) — БЕСПЛАТНО (бонус)')
+            mk.add('🔙 Назад')
+            bot.send_message(chat_id, "🎯 У тебя есть бонусный тест!", reply_markup=mk)
+        else:
+            bot.send_message(chat_id, "🎯 Выбери тест:", reply_markup=test_type_menu())
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
@@ -695,9 +936,31 @@ def back_to_main(message):
 def free_test(message):
     show_topics(message, 'free', 10)
 
-@bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов)')
+@bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов) — 50 ₽')
 def paid_test(message):
-    show_topics(message, 'paid', 20)
+    chat_id = message.chat.id
+    c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
+    if row and row[0] > 0:
+        # Бесплатный бонусный тест
+        c.execute("UPDATE users SET bonus_tests = bonus_tests - 1 WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+        show_topics(message, 'paid', 20)
+    else:
+        # Отправляем инвойс на 50 Stars
+        send_invoice(chat_id, "test_20", PRICE_TEST_20)
+
+@bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов) — БЕСПЛАТНО (бонус)')
+def paid_test_bonus(message):
+    chat_id = message.chat.id
+    c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
+    row = c.fetchone()
+    if row and row[0] > 0:
+        c.execute("UPDATE users SET bonus_tests = bonus_tests - 1 WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+        show_topics(message, 'paid', 20)
+    else:
+        bot.send_message(chat_id, "❌ У тебя нет бонусных тестов.", reply_markup=test_type_menu())
 
 def show_topics(message, test_type, count):
     try:
@@ -716,11 +979,13 @@ def topic_callback(c):
         is_paid = test_type == 'paid'
         count = int(count)
         chat_id = c.message.chat.id
+        
         bot.edit_message_text("⏳ Генерация теста...\n⏱ Ожидание до 30 сек", chat_id, c.message.message_id)
         questions = generate_test_questions(topic, count)
         if not questions:
             bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.")
             return
+        
         sessions[chat_id] = {
             'topic': topic,
             'questions': questions,
@@ -801,21 +1066,39 @@ def finish_test(chat_id):
         total = len(s['questions']) * 3
         answers = ', '.join(s['answers'])
         is_paid = s.get('is_paid', False)
+        
         if is_paid:
-            c.execute("UPDATE stats SET paid_count = paid_count + 1")
+            c.execute("UPDATE stats SET paid_test_count = paid_test_count + 1")
         else:
             c.execute("UPDATE stats SET free_count = free_count + 1")
         conn.commit()
+        
         bot.send_message(chat_id, f"📊 Тест завершен!\nРезультат: {score} из {total}\n⏳ Анализирую...\n⏱ Ожидание до 30 сек")
         analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
+        
         if analysis:
             bot.send_message(chat_id, f"🔍 АНАЛИЗ\n\n{analysis}", reply_markup=get_main_menu(chat_id))
+            
+            # Предлагаем купить коуч-сеанс
+            if is_paid:
+                mk = telebot.types.InlineKeyboardMarkup()
+                mk.add(telebot.types.InlineKeyboardButton("🎯 Коуч-сеанс за 100 Stars", callback_data="buy_coach"))
+                bot.send_message(chat_id, "🎯 Хочешь разобраться глубже? Пройди коуч-сеанс — 25 вопросов + план действий.", reply_markup=mk)
         else:
             bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
         if chat_id in sessions:
             del sessions[chat_id]
     except Exception as e:
         logger.error(f"Ошибка: {e}")
+
+@bot.callback_query_handler(func=lambda c: c.data == 'buy_coach')
+def buy_coach(c):
+    try:
+        chat_id = c.message.chat.id
+        send_invoice(chat_id, "coach", PRICE_COACH)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+    c.answer()
 
 # ============================================================
 # АДМИН-ПАНЕЛЬ
@@ -834,7 +1117,7 @@ def admin_panel(message):
 def back_to_main_from_admin(message):
     start(message)
 
-# -------------------- НОВЫЙ ПОСТ (С ВЫБОРОМ) --------------------
+# -------------------- НОВЫЙ ПОСТ --------------------
 
 @bot.message_handler(func=lambda m: m.text == '📝 Новый пост')
 def new_post_menu(message):
@@ -893,14 +1176,14 @@ def process_only_image(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# -------------------- СТАТИСТИКА (МГНОВЕННО) --------------------
+# -------------------- СТАТИСТИКА --------------------
 
 @bot.message_handler(func=lambda m: m.text == '📊 Статистика')
 def admin_stats(message):
     try:
         if message.chat.id not in ADMIN_IDS:
             return
-        c.execute("SELECT free_count, paid_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count FROM stats")
+        c.execute("SELECT free_count, paid_test_count, coach_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count, referrals_count FROM stats")
         stats_row = c.fetchone()
         c.execute("SELECT COUNT(*) FROM users")
         users_count = c.fetchone()[0]
@@ -908,23 +1191,30 @@ def admin_stats(message):
         gifts_count = c.fetchone()[0]
         c.execute("SELECT COUNT(*) FROM checkins WHERE is_done = 0")
         pending_checkins = c.fetchone()[0]
+        
+        c.execute("SELECT SUM(amount) FROM payments WHERE status = 'completed'")
+        total_revenue = c.fetchone()[0] or 0
+        
         stats_text = f"""📊 СТАТИСТИКА
 
 👥 Пользователей: {users_count}
-🧠 Бесплатных: {stats_row[0] if stats_row else 0}
-💎 Платных: {stats_row[1] if stats_row else 0}
-🎫 Промокодов: {stats_row[2] if stats_row else 0}
+🧠 Бесплатных тестов: {stats_row[0] if stats_row else 0}
+💎 Платных тестов: {stats_row[1] if stats_row else 0}
+🎯 Коуч-сеансов: {stats_row[2] if stats_row else 0}
+🎫 Промокодов: {stats_row[3] if stats_row else 0}
 📤 Постов: {stats_row[4] if stats_row else 0}
-🧠 Тестов: {stats_row[5] if stats_row else 0}
+🧠 Тестов создано: {stats_row[5] if stats_row else 0}
 🖼 Картинок: {stats_row[6] if stats_row else 0}
 🎯 Консультаций: {stats_row[7] if stats_row else 0}
+👥 Рефералов: {stats_row[8] if stats_row else 0}
+⏳ Чек-инов: {pending_checkins}
 🎁 Подарков: {gifts_count}
-⏳ Ожидают чек-ин: {pending_checkins}"""
+💵 Доход (Stars): {total_revenue}"""
         bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# -------------------- РАСПИСАНИЕ (МГНОВЕННО) --------------------
+# -------------------- РАСПИСАНИЕ --------------------
 
 @bot.message_handler(func=lambda m: m.text == '⏰ Расписание')
 def show_schedule(message):
@@ -949,7 +1239,7 @@ def show_schedule(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# -------------------- ЛОГИ (МГНОВЕННО) --------------------
+# -------------------- ЛОГИ --------------------
 
 @bot.message_handler(func=lambda m: m.text == '📋 Логи')
 def show_logs(message):
@@ -970,7 +1260,7 @@ def show_logs(message):
     except Exception as e:
         bot.send_message(chat_id, f"❌ Ошибка: {e}")
 
-# -------------------- КАРТИНКИ В КАНАЛ (ОТДЕЛЬНАЯ КНОПКА) --------------------
+# -------------------- КАРТИНКИ В КАНАЛ --------------------
 
 @bot.message_handler(func=lambda m: m.text == '🖼 Картинка в канал')
 def image_to_channel(message):
@@ -1000,7 +1290,7 @@ def process_image_only_standalone(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# -------------------- ТЕСТЫ В КАНАЛ (БЕЗ КАРТИНКИ) --------------------
+# -------------------- ТЕСТЫ В КАНАЛ --------------------
 
 @bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
 def test_to_channel_start(message):
@@ -1012,7 +1302,7 @@ def test_to_channel_start(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# -------------------- СЕАНС КОУЧИНГА (С ДИАГНОСТИКОЙ) --------------------
+# -------------------- КОУЧ-СЕАНС (С ОПЛАТОЙ) --------------------
 
 @bot.message_handler(func=lambda m: m.text == '🎯 Сеанс коучинга')
 def start_consultation(message):
@@ -1021,7 +1311,16 @@ def start_consultation(message):
         if chat_id not in ADMIN_IDS:
             return
         
-        # Диагностика состояния
+        # Проверяем, оплачен ли сеанс
+        c.execute("SELECT id FROM payments WHERE chat_id = ? AND product = 'coach' AND status = 'completed'", (chat_id,))
+        if not c.fetchone():
+            # Проверяем, не активен ли уже сеанс
+            c.execute("SELECT id FROM consultation_sessions WHERE chat_id = ? AND is_active = 1", (chat_id,))
+            if not c.fetchone():
+                send_invoice(chat_id, "coach", PRICE_COACH)
+                return
+        
+        # Диагностика
         bot.send_message(
             chat_id,
             "🧠 ПЕРЕД СЕАНСОМ\n\n"
@@ -1071,6 +1370,12 @@ def confirm_consultation(message):
     try:
         chat_id = message.chat.id
         
+        # Проверяем оплату
+        c.execute("SELECT id FROM payments WHERE chat_id = ? AND product = 'coach' AND status = 'completed'", (chat_id,))
+        if not c.fetchone():
+            send_invoice(chat_id, "coach", PRICE_COACH)
+            return
+        
         diagnostic = consultations.get(chat_id, {}).get("diagnostic", "неизвестно")
         
         bot.send_message(
@@ -1087,8 +1392,8 @@ def confirm_consultation(message):
                 del consultations[chat_id]
             return
         
-        c.execute("""INSERT INTO consultation_sessions (chat_id, questions, current_q, is_active) VALUES (?, ?, ?, ?)""",
-                  (chat_id, json.dumps(questions), 0, 1))
+        c.execute("""INSERT INTO consultation_sessions (chat_id, questions, current_q, is_active, is_paid) VALUES (?, ?, ?, ?, ?)""",
+                  (chat_id, json.dumps(questions), 0, 1, 1))
         conn.commit()
         session_id = c.lastrowid
         
@@ -1154,7 +1459,6 @@ def finish_consultation(chat_id):
                 answers_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(s['answers'])])
                 analysis = generate_consultation_analysis(answers_text, chat_id, s['session_id'])
                 
-                # Микро-задания после сеанса
                 tasks = [
                     "🟢 Задание 1: Напиши 3 вещи, за которые ты благодарен сегодня",
                     "🟢 Задание 2: Скажи себе в зеркале: 'Я справлюсь'",
@@ -1162,18 +1466,22 @@ def finish_consultation(chat_id):
                 ]
                 tasks_text = "\n\n📋 **ТВОИ ЗАДАНИЯ НА СЕГОДНЯ:**\n" + "\n".join(tasks)
                 
+                # Кнопка «Поделиться»
+                mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+                mk.add('📤 Поделиться', '🚀 Старт')
+                
                 if analysis:
                     bot.send_message(
                         chat_id,
                         f"🔮 ПОЛНЫЙ РАЗБОР\n\n{analysis}\n\n{tasks_text}",
-                        reply_markup=admin_menu(),
+                        reply_markup=mk,
                         parse_mode='Markdown'
                     )
                 else:
                     bot.send_message(
                         chat_id,
                         f"❌ Не удалось сгенерировать анализ.\n\n{tasks_text}",
-                        reply_markup=admin_menu(),
+                        reply_markup=mk,
                         parse_mode='Markdown'
                     )
             except Exception as e:
@@ -1215,7 +1523,7 @@ def handle_theme_selection(message):
         action = sessions.get(chat_id, {}).get("action")
         
         if action == "test_to_channel":
-            # === ТЕСТ (БЕЗ КАРТИНКИ) ===
+            # === ТЕСТ ===
             bot.send_message(chat_id, f"⏳ Генерация теста на тему '{theme}'...\n⏱ Ожидание до 30 сек")
             questions = generate_test_questions(theme, 10)
             if not questions:
@@ -1405,7 +1713,7 @@ def process_gift_activation(message):
         conn.commit()
         bot.send_message(
             chat_id,
-            "🎉 ПОДАРОК АКТИВИРОВАН!\n\nТы получаешь бесплатный сеанс коучинга на 25 вопросов.\n\nНажми «✅ Начать сеанс»",
+            "🎉 ПОДАРОК АКТИВИРОВАН!\n\nТы получаешь бесплатный коуч-сеанс.\n\nНажми «✅ Начать сеанс»",
             reply_markup=telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1).add('✅ Начать сеанс')
         )
         if chat_id not in consultations:
@@ -1519,7 +1827,7 @@ def run_bot():
         time.sleep(2)
         bot.remove_webhook()
         logger.info("✅ Вебхук удален")
-        bot.polling(none_stop=True, interval=0, timeout=20, allowed_updates=['message', 'callback_query'])
+        bot.polling(none_stop=True, interval=0, timeout=20, allowed_updates=['message', 'callback_query', 'pre_checkout_query', 'successful_payment'])
     except Exception as e:
         logger.error(f"❌ Критическая ошибка: {e}")
         if "409" in str(e):
