@@ -18,51 +18,158 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
-GIGA_CLIENT_ID = os.environ.get('GIGA_CLIENT_ID')
-GIGA_CLIENT_SECRET = os.environ.get('GIGA_CLIENT_SECRET')
 ADMIN_IDS = [8746212340]
+
+# НОВЫЕ КЛЮЧИ
+GIGA_CLIENT_ID = "019fc7a2-8d46-70cb-9028-fcfc5a1d4d0e"
+GIGA_CLIENT_SECRET = "MDE5ZmM3YTItOGQ0Ni03MGNiLTkwMjgtZmNmYzVhMWQ0ZDBlOjljMmUzNTI3LWI3NzAtNDU0NS1iMTFmLTBiZDljNDMxNWU1Mw=="
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ============================================
-# УБИЙЦА 409 - МАКСИМАЛЬНАЯ ЖЕСТКОСТЬ
+# УБИВАЕМ 409
 # ============================================
 
-def kill_409_forever():
-    """Уничтожает все следы вебхука"""
+def kill_409():
     try:
-        # 1. Удаляем вебхук 3 раза для надежности
-        for i in range(3):
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-            requests.post(url, json={"drop_pending_updates": True})
-            time.sleep(1)
-        
-        # 2. Сбрасываем вебхук в ноль
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-        requests.post(url, json={"url": "", "drop_pending_updates": True})
-        
-        # 3. Удаляем все возможные файлы
-        for pattern in ['update-offset-*.json', '*.lock', '*.session', '*.state']:
-            for f in glob.glob(pattern):
-                try:
-                    os.remove(f)
-                except:
-                    pass
-        
-        # 4. Проверяем статус
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
-        response = requests.get(url)
-        logger.info(f"Статус вебхука: {response.json()}")
-        
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        requests.post(url, json={"drop_pending_updates": True})
+        for f in glob.glob('update-offset-*.json'):
+            try:
+                os.remove(f)
+            except:
+                pass
         return True
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
+    except:
         return False
 
-# ВЫПОЛНЯЕМ УБИЙСТВО
-kill_409_forever()
-time.sleep(5)
+kill_409()
+time.sleep(2)
+
+# ============================================
+# GIGACHAT - ИСПРАВЛЕННАЯ ВЕРСИЯ С ОЖИДАНИЕМ
+# ============================================
+
+giga_token_cache = {"token": None, "expires": 0}
+
+def get_giga_token():
+    """Получение токена GigaChat - ИСПРАВЛЕНО"""
+    if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
+        return giga_token_cache["token"]
+    
+    try:
+        # ПРАВИЛЬНОЕ формирование авторизации
+        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
+        auth_b64 = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+        
+        headers = {
+            'Authorization': f'Basic {auth_b64}',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        
+        logger.info("🔄 Получение токена GigaChat...")
+        
+        response = requests.post(
+            'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
+            headers=headers,
+            data='scope=GIGACHAT_API_PERS',
+            timeout=30,
+            verify=False
+        )
+        
+        logger.info(f"📡 Статус токена: {response.status_code}")
+        
+        if response.status_code != 200:
+            logger.error(f"❌ Ошибка: {response.status_code} - {response.text}")
+            return None
+        
+        data = response.json()
+        token = data.get('access_token')
+        
+        if not token:
+            logger.error("❌ Токен не найден")
+            return None
+        
+        giga_token_cache["token"] = token
+        giga_token_cache["expires"] = time.time() + 3500
+        logger.info("✅ Токен получен!")
+        return token
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка: {e}")
+        return None
+
+def ask_giga(system, user, max_tokens=2500):
+    """Запрос к GigaChat С ОЖИДАНИЕМ 30 СЕКУНД"""
+    token = get_giga_token()
+    if not token:
+        logger.error("❌ Нет токена")
+        return None
+    
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+    
+    payload = {
+        "model": "GigaChat",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ],
+        "temperature": 0.9,
+        "max_tokens": max_tokens
+    }
+    
+    try:
+        logger.info("📤 Запрос к GigaChat...")
+        start_time = time.time()
+        
+        response = requests.post(
+            'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
+            headers=headers,
+            json=payload,
+            timeout=90,  # Увеличил таймаут до 90 секунд
+            verify=False
+        )
+        
+        elapsed = time.time() - start_time
+        logger.info(f"⏱ Время ответа: {elapsed:.1f} секунд")
+        
+        # ЕСЛИ ОТВЕТ БЫСТРЫЙ - ЖДЕМ 30 СЕКУНД
+        if elapsed < 30:
+            wait_time = 30 - elapsed
+            logger.info(f"⏳ Ожидание {wait_time:.1f} секунд (для полной генерации)...")
+            time.sleep(wait_time)
+        
+        if response.status_code != 200:
+            logger.error(f"❌ Ошибка: {response.status_code} - {response.text[:200]}")
+            return None
+        
+        result = response.json()
+        content = result['choices'][0]['message']['content']
+        logger.info("✅ Ответ получен!")
+        return content
+        
+    except requests.exceptions.Timeout:
+        logger.error("❌ Таймаут GigaChat (90 секунд)")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Ошибка: {e}")
+        return None
+
+def ask_giga_with_wait(system, user, max_tokens=2500):
+    """Обертка с гарантированным ожиданием 30 секунд"""
+    result = ask_giga(system, user, max_tokens)
+    
+    # ДОПОЛНИТЕЛЬНАЯ ЗАДЕРЖКА если нужно
+    if result:
+        logger.info("✅ Готово! Возвращаем результат.")
+    else:
+        logger.error("❌ Не удалось получить ответ")
+    
+    return result
 
 # ============================================
 # БАЗА ДАННЫХ
@@ -114,94 +221,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS posts_history
 conn.commit()
 
 # ============================================
-# GIGACHAT
-# ============================================
-
-giga_token_cache = {"token": None, "expires": 0}
-
-def get_giga_token():
-    if giga_token_cache["token"] and time.time() < giga_token_cache["expires"]:
-        return giga_token_cache["token"]
-    
-    try:
-        auth_string = f"{GIGA_CLIENT_ID}:{GIGA_CLIENT_SECRET}"
-        auth_b64 = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
-        
-        headers = {
-            'Authorization': f'Basic {auth_b64}',
-            'RqUID': str(uuid.uuid4()),
-            'Content-Type': 'application/x-www-form-urlencoded'
-        }
-        
-        response = requests.post(
-            'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
-            headers=headers,
-            data='scope=GIGACHAT_API_PERS',
-            timeout=15,
-            verify=False
-        )
-        
-        if response.status_code != 200:
-            logger.error(f"Ошибка токена: {response.status_code}")
-            return None
-        
-        data = response.json()
-        token = data.get('access_token')
-        
-        if not token:
-            return None
-        
-        giga_token_cache["token"] = token
-        giga_token_cache["expires"] = time.time() + 3500
-        logger.info("✅ Токен получен")
-        return token
-        
-    except Exception as e:
-        logger.error(f"Ошибка токена: {e}")
-        return None
-
-def ask_giga(system, user, max_tokens=2500):
-    token = get_giga_token()
-    if not token:
-        return None
-    
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'RqUID': str(uuid.uuid4()),
-        'Content-Type': 'application/json'
-    }
-    
-    payload = {
-        "model": "GigaChat",
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ],
-        "temperature": 0.9,
-        "max_tokens": max_tokens
-    }
-    
-    try:
-        response = requests.post(
-            'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
-            headers=headers,
-            json=payload,
-            timeout=60,
-            verify=False
-        )
-        
-        if response.status_code != 200:
-            logger.error(f"Ошибка GigaChat: {response.status_code}")
-            return None
-        
-        result = response.json()
-        return result['choices'][0]['message']['content']
-        
-    except Exception as e:
-        logger.error(f"Ошибка GigaChat: {e}")
-        return None
-
-# ============================================
 # ГЕНЕРАТОРЫ
 # ============================================
 
@@ -232,7 +251,7 @@ def generate_test_questions(topic, count=10):
     ]
     Верни ТОЛЬКО JSON."""
     
-    response = ask_giga(system, user, 3000)
+    response = ask_giga_with_wait(system, user, 3000)
     if not response:
         return None
     
@@ -244,7 +263,8 @@ def generate_test_questions(topic, count=10):
         
         questions = json.loads(response[start:end])
         return questions[:count]
-    except:
+    except Exception as e:
+        logger.error(f"Ошибка парсинга: {e}")
         return None
 
 def generate_analysis(topic, answers, score, total, is_paid):
@@ -263,7 +283,7 @@ def generate_analysis(topic, answers, score, total, is_paid):
 Баллы: {score} из {total}
 Сделай краткий анализ."""
     
-    return ask_giga(system, user, 3000 if is_paid else 2000)
+    return ask_giga_with_wait(system, user, 3000 if is_paid else 2000)
 
 def generate_post():
     themes = ["психология", "отношения", "саморазвитие", "мотивация", "деньги"]
@@ -277,7 +297,7 @@ def generate_post():
     Добавь практический совет.
     Закончи вопросом к читателю."""
     
-    return ask_giga(system, user, 2000)
+    return ask_giga_with_wait(system, user, 2000)
 
 # ============================================
 # TELEGRAM БОТ
@@ -394,14 +414,14 @@ def topic_callback(c):
         is_paid = test_type == 'paid'
         
         bot.edit_message_text(
-            "⏳ Генерация теста...\nПодождите до 40 секунд.",
+            "⏳ Генерация теста...\n⏱ Ожидание до 30 секунд",
             c.message.chat.id,
             c.message.message_id
         )
         
         questions = generate_test_questions(topic, int(count))
         if not questions:
-            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест.")
+            bot.send_message(c.message.chat.id, "❌ Не удалось сгенерировать тест. Попробуйте позже.")
             return
         
         sessions[c.message.chat.id] = {
@@ -488,7 +508,7 @@ def finish_test(chat_id):
         chat_id,
         f"📊 Тест завершен!\n\n"
         f"✅ Результат: {score} из {total}\n"
-        f"⏳ GigaChat генерирует анализ..."
+        f"⏳ GigaChat генерирует анализ...\n⏱ Ожидание до 30 секунд"
     )
     
     analysis = generate_analysis(s['topic'], answers, score, len(s['questions']), is_paid)
@@ -502,7 +522,7 @@ def finish_test(chat_id):
     else:
         bot.send_message(
             chat_id,
-            f"❌ Не удалось сгенерировать анализ.",
+            f"❌ Не удалось сгенерировать анализ.\nПопробуйте позже.",
             reply_markup=get_main_menu(chat_id)
         )
     
@@ -523,7 +543,7 @@ def admin_post(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏳ До 40 секунд.")
+    bot.send_message(message.chat.id, "📤 Генерация поста...\n⏱ Ожидание до 30 секунд")
     text = generate_post()
     
     if not text:
@@ -544,7 +564,7 @@ def admin_test(message):
     if message.chat.id not in ADMIN_IDS:
         return
     
-    bot.send_message(message.chat.id, "🧠 Генерация теста для канала...")
+    bot.send_message(message.chat.id, "🧠 Генерация теста для канала...\n⏱ Ожидание до 30 секунд")
     
     topic = random.choice(list(TEST_TOPICS.keys()))
     questions = generate_test_questions(topic, 10)
@@ -663,32 +683,18 @@ def process_promo(message):
     )
 
 # ============================================
-# ЗАПУСК БОТА - ОСОБЫЙ РЕЖИМ
+# ЗАПУСК БОТА
 # ============================================
 
 def run_bot():
     logger.info("🤖 Запуск бота...")
     try:
-        # ЕЩЕ РАЗ убиваем вебхук перед запуском
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        requests.post(url, json={"drop_pending_updates": True})
-        
-        # Запускаем с особыми параметрами
         bot.remove_webhook()
-        bot.polling(
-            none_stop=True,
-            interval=0,
-            timeout=20,
-            long_polling_timeout=20,
-            allowed_updates=['message', 'callback_query']
-        )
+        bot.polling(none_stop=True, interval=0, timeout=20)
     except Exception as e:
         logger.error(f"❌ Ошибка бота: {e}")
         time.sleep(5)
         run_bot()
 
 if __name__ == "__main__":
-    # ЕЩЕ ОДИН РАЗ убиваем
-    kill_409_forever()
-    time.sleep(3)
     run_bot()
