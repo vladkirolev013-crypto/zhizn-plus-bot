@@ -7,10 +7,10 @@ import time
 import logging
 import threading
 import random
+import glob
 import sys
 import traceback
 import string
-import glob
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask
@@ -18,116 +18,75 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================================
-# 🔐 КЛЮЧИ (ВСТАВЛЕНЫ ПРЯМО В КОД)
+# НАСТРОЙКИ
 # ============================================================
 
 BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
-# КЛЮЧИ AGNES AI (для картинок)
 AGNES_API_KEY = "sk-8nqC897jST7vx1brGMUTNLRsVGPXgP7Bcpuwmbl5quaCLN5c"
 AGNES_API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
 
-# КЛЮЧ OPENROUTER (запасной, может не работать)
-OPENROUTER_API_KEY = "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"
-
-# ============================================================
-# ⚙️ НАСТРОЙКИ
-# ============================================================
-
 TIMEZONE = ZoneInfo("Asia/Novokuznetsk")
-BOT_VERSION = "18.1.0"
-BOT_NAME = "Жизнь+ Про (WORKING)"
+
+BOT_VERSION = "12.0.0"
+BOT_NAME = "Жизнь+ Про"
+
 DB_PATH = 'channel.db'
 LOG_PATH = 'bot_logs.txt'
 
-PRICE_TEST_20 = 50  # 50 Stars
-PRICE_COACH = 100   # 100 Stars
-
-# ============================================================
-# 📚 50+ ТЕМ
-# ============================================================
-
 CHANNEL_THEMES = [
-    "психология", "отношения", "карьера", "здоровье", "финансы",
-    "мотивация", "саморазвитие", "эмоции", "страхи", "любовь к себе",
-    "благодарность", "осознанность", "прощение", "энергия", "выбор",
-    "смысл жизни", "одиночество", "тревога", "депрессия", "самооценка",
-    "уверенность", "принятие", "изменения", "цели", "привычки",
-    "травмы", "детство", "родители", "партнерство", "доверие",
-    "счастье", "покой", "сила", "мягкость", "интуиция",
-    "творчество", "радость", "смех", "слезы", "обида",
-    "вина", "стыд", "гордость", "надежда", "вера",
-    "любовь", "дружба", "семья", "работа", "деньги",
-    "искусство", "природа", "тишина", "движение"
+    "психология",
+    "отношения",
+    "карьера",
+    "здоровье",
+    "финансы",
+    "мотивация",
+    "саморазвитие"
 ]
 
+PRICE_TEST_20 = 50
+PRICE_COACH = 100
+
 # ============================================================
-# 🤖 РАБОЧИЕ AI-ПРОВАЙДЕРЫ (БЕСПЛАТНЫЕ)
+# AI-ПРОВАЙДЕРЫ
 # ============================================================
 
 AI_PROVIDERS = [
-    # 1. G4F - работает стабильно
-    {
-        "name": "G4F Mini",
-        "url": "https://api.g4f.icu/v1/chat/completions",
-        "model": "gpt-4o-mini",
-        "api_key": "g4f"
-    },
-    {
-        "name": "G4F 4o",
-        "url": "https://api.g4f.icu/v1/chat/completions",
-        "model": "gpt-4o",
-        "api_key": "g4f"
-    },
-    {
-        "name": "G4F Claude",
-        "url": "https://api.g4f.icu/v1/chat/completions",
-        "model": "claude-3.5-sonnet",
-        "api_key": "g4f"
-    },
-    
-    # 2. DeepSeek - бесплатно
-    {
-        "name": "DeepSeek",
-        "url": "https://api.deepseek.com/v1/chat/completions",
-        "model": "deepseek-chat",
-        "api_key": ""
-    },
-    
-    # 3. OpenRouter (запасной, может требовать оплаты)
     {
         "name": "OpenRouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "model": "meta-llama/llama-3.1-70b-instruct:free",
-        "api_key": OPENROUTER_API_KEY
+        "model": "openrouter/auto",  # исправлено: openrouter/free не существует
+        "api_key": "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"
     },
-    
-    # 4. Together AI (бесплатно)
     {
-        "name": "Together",
-        "url": "https://api.together.xyz/v1/chat/completions",
-        "model": "meta-llama/Llama-3.1-70B-Instruct",
+        "name": "G4F",
+        "url": "https://api.g4f.icu/v1/chat/completions",
+        "model": "gpt-4o-mini",
         "api_key": ""
     },
-    
-    # 5. Pawan (может работать)
     {
         "name": "Pawan",
         "url": "https://api.pawan.krd/v1/chat/completions",
+        "model": "gpt-3.5-turbo",
+        "api_key": ""
+    },
+    {
+        "name": "SHN",
+        "url": "https://chatgpt-api.shn.hk/v1/chat/completions",
         "model": "gpt-3.5-turbo",
         "api_key": ""
     }
 ]
 
 # ============================================================
-# 📝 ЛОГИРОВАНИЕ
+# ЛОГИРОВАНИЕ
 # ============================================================
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler(LOG_PATH, encoding='utf-8')
@@ -137,41 +96,51 @@ logger = logging.getLogger(__name__)
 logger.info(f"🚀 ЗАПУСК {BOT_NAME} v{BOT_VERSION}")
 
 # ============================================================
-# 💀 УБИЙЦА 409
+# СОЗДАЁМ БОТА СРАЗУ — ДО ВСЕХ ДЕКОРАТОРОВ
 # ============================================================
 
-def kill_409():
-    """Полное уничтожение ошибки 409 Conflict"""
+bot = telebot.TeleBot(BOT_TOKEN)
+DB_LOCK = threading.RLock()  # потокобезопасность SQLite
+
+# ============================================================
+# УБИЙЦА 409
+# ============================================================
+
+def super_kill_409():
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        requests.post(url, json={"drop_pending_updates": True}, timeout=10)
-        
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-        requests.post(url, json={"url": "", "drop_pending_updates": True}, timeout=10)
-        
-        for pattern in ['*.lock', '*.session', '*.state', '*.pid']:
+        for i in range(10):
+            try:
+                url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+                requests.post(url, json={"drop_pending_updates": True}, timeout=10)
+                time.sleep(0.1)
+            except Exception:
+                pass
+        patterns = ['update-offset-*.json', '*.lock', '*.session', '*.state', '*.pid']
+        for pattern in patterns:
             for f in glob.glob(pattern):
                 try:
                     os.remove(f)
-                except:
+                except Exception:
                     pass
-        
         logger.info("🔥 409 УНИЧТОЖЕН")
         return True
     except Exception as e:
-        logger.error(f"Ошибка убийцы 409: {e}")
+        logger.error(f"Ошибка: {e}")
         return False
 
-for i in range(3):
-    kill_409()
-    time.sleep(1)
+for _ in range(3):
+    super_kill_409()
+    time.sleep(2)
 
 # ============================================================
-# 💾 БАЗА ДАННЫХ
+# БАЗА ДАННЫХ
 # ============================================================
+
+def get_conn():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_database():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = get_conn()
     c = conn.cursor()
     
     c.execute('''CREATE TABLE IF NOT EXISTS users (
@@ -185,7 +154,8 @@ def init_database():
         last_activity TIMESTAMP,
         referrer_id INTEGER DEFAULT 0,
         referral_code TEXT UNIQUE,
-        bonus_tests INTEGER DEFAULT 0
+        bonus_tests INTEGER DEFAULT 0,
+        coach_credits INTEGER DEFAULT 0
     )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS referrals (
@@ -208,14 +178,12 @@ def init_database():
         consultations_count INTEGER DEFAULT 0,
         referrals_count INTEGER DEFAULT 0,
         gifts_used INTEGER DEFAULT 0,
-        avg_test_score REAL DEFAULT 0,
-        total_revenue INTEGER DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
     c.execute("SELECT COUNT(*) FROM stats")
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO stats DEFAULT VALUES")
+        c.execute("INSERT INTO stats (free_count, paid_test_count, coach_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count, referrals_count, gifts_used) VALUES (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)")
     
     c.execute('''CREATE TABLE IF NOT EXISTS consultation_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,7 +194,6 @@ def init_database():
         is_active INTEGER DEFAULT 1,
         is_paid INTEGER DEFAULT 0,
         is_analyzed INTEGER DEFAULT 0,
-        diagnostic TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
@@ -306,22 +273,12 @@ def init_database():
 
 init_database()
 
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-c = conn.cursor()
-
 # ============================================================
-# 🤖 БОТ
-# ============================================================
-
-bot = telebot.TeleBot(BOT_TOKEN)
-
-# ============================================================
-# 🌊 AI (ТЕКСТ) - РАБОЧАЯ ВЕРСИЯ
+# AI (ТЕКСТ)
 # ============================================================
 
 def ask_ai(system, user, max_tokens=3000, retries=2):
-    """Запрос к AI с автоматическим переключением провайдеров"""
-    if not user or not user.strip():
+    if not user or len(user.strip()) == 0:
         user = "Сделай запрос."
     
     messages = [
@@ -332,10 +289,10 @@ def ask_ai(system, user, max_tokens=3000, retries=2):
     for provider in AI_PROVIDERS:
         for attempt in range(retries):
             try:
-                logger.info(f"🔄 {provider['name']} (попытка {attempt+1}/{retries})")
+                logger.info(f"🔄 Провайдер: {provider['name']}, попытка {attempt+1}/{retries}")
                 
                 headers = {"Content-Type": "application/json"}
-                if provider.get("api_key") and provider["api_key"]:
+                if provider.get("api_key"):
                     headers["Authorization"] = f"Bearer {provider['api_key']}"
                 
                 payload = {
@@ -346,59 +303,48 @@ def ask_ai(system, user, max_tokens=3000, retries=2):
                     "stream": False
                 }
                 
-                start = time.time()
                 response = requests.post(
                     provider["url"],
                     headers=headers,
                     json=payload,
-                    timeout=35,
+                    timeout=40,
                     verify=False
                 )
-                elapsed = time.time() - start
-                logger.info(f"⏱ {elapsed:.2f}с | Статус: {response.status_code}")
                 
                 if response.status_code == 200:
-                    data = response.json()
-                    content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    result = response.json()
+                    content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
                     if content and len(content) > 10:
-                        logger.info(f"✅ {provider['name']} ответил ({len(content)} символов)")
+                        logger.info(f"✅ ОТВЕТ ОТ {provider['name']} ({len(content)} символов)")
                         return content
                     else:
                         logger.warning(f"⚠️ Пустой ответ от {provider['name']}")
-                elif response.status_code == 429:
-                    logger.warning(f"⚠️ Rate limit {provider['name']}, ждём 5с...")
-                    time.sleep(5)
                 else:
                     logger.warning(f"⚠️ Ошибка {provider['name']}: {response.status_code}")
-                    if response.text:
-                        logger.debug(f"📄 Ответ: {response.text[:200]}")
                 
                 time.sleep(0.5)
-            except requests.exceptions.Timeout:
-                logger.warning(f"⚠️ Таймаут {provider['name']}")
             except Exception as e:
-                logger.warning(f"⚠️ {provider['name']}: {str(e)[:50]}")
+                logger.warning(f"⚠️ Ошибка {provider['name']}: {e}")
                 time.sleep(0.5)
         
-        logger.info(f"⏳ Переключение с {provider['name']}...")
+        logger.info(f"⏳ {provider['name']} не ответил, переключаюсь...")
     
-    logger.error("❌ ВСЕ AI-ПРОВАЙДЕРЫ НЕДОСТУПНЫ")
+    logger.error("❌ ВСЕ AI-ПРОВАЙДЕРЫ НЕ ОТВЕТИЛИ")
     return None
 
 # ============================================================
-# 🖼 ГЕНЕРАЦИЯ КАРТИНОК
+# КАРТИНКИ (AGNES AI + Pollinations)
 # ============================================================
 
 def generate_image(prompt, width=1024, height=768):
-    """Генерация супер-картинки через Agnes AI"""
     try:
-        logger.info("🖼 Генерация через Agnes AI...")
+        logger.info("🖼 Генерация супер-картинки через Agnes AI...")
         
         full_prompt = f"""Hyper-realistic, cinematic photography. {prompt}
-Subject: European, Caucasian, light skin, natural glow, warm smile, relaxed.
-Environment: Sunny, golden hour, warm sunlight, soft lens flare.
+Subject: European, Caucasian, light skin, natural glow, warm smile, relaxed, positive energy.
+Environment: Sunny, golden hour, warm sunlight, lush green, peaceful.
 Lighting: Soft golden backlight, warm skin tones.
-Style: Photorealistic, high detail, magazine quality.
+Style: Photorealistic, high detail, natural texture, magazine quality, warm amber tones.
 Quality: 8K, masterpiece."""
         
         headers = {
@@ -414,86 +360,85 @@ Quality: 8K, masterpiece."""
         }
         
         response = requests.post(
-            AGNES_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=60,
-            verify=False
+            AGNES_API_URL, headers=headers, json=payload, timeout=60, verify=False
         )
         
         if response.status_code == 200:
             data = response.json()
             image_url = data.get('data', [{}])[0].get('url')
-            
             if image_url:
                 img_response = requests.get(image_url, timeout=30)
                 if img_response.status_code == 200:
-                    filename = f"/tmp/img_{int(time.time())}_{random.randint(1000,999999)}.jpg"
+                    filename = f"/tmp/image_{int(time.time())}_{random.randint(1000,999999)}.jpg"
                     with open(filename, 'wb') as f:
                         f.write(img_response.content)
-                    logger.info("✅ Картинка создана")
+                    logger.info(f"✅ Супер-картинка создана")
                     return filename
-                else:
-                    logger.warning("⚠️ Не удалось скачать")
-            else:
-                logger.warning("⚠️ URL не найден")
         else:
-            logger.error(f"❌ Ошибка Agnes: {response.status_code}")
-            
+            logger.error(f"❌ Ошибка Agnes AI: {response.status_code}")
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error(f"❌ Ошибка генерации картинки: {e}")
     
-    logger.info("🔄 Переключение на Pollinations...")
+    logger.info("🔄 Переключаюсь на Pollinations...")
     return generate_image_pollinations(prompt)
 
 def generate_image_pollinations(prompt):
-    """Резервный генератор через Pollinations"""
     try:
-        clean = prompt[:200].replace(' ', '%20').replace('"', '').replace("'", "").replace(',', '%2C')
-        url = f"https://image.pollinations.ai/prompt/{clean}?width=1024&height=768&nologo=true"
+        clean_prompt = prompt[:200].replace(' ', '%20').replace('"', '').replace("'", "").replace(',', '%2C')
+        url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=1024&height=768&nologo=true&seed={random.randint(1,999999)}"
         
+        logger.info("🖼 Генерация через Pollinations...")
         response = requests.get(url, timeout=30)
+        
         if response.status_code == 200 and len(response.content) > 1000:
-            filename = f"/tmp/img_{int(time.time())}_{random.randint(1000,999999)}.jpg"
+            filename = f"/tmp/image_{int(time.time())}_{random.randint(1000,999999)}.jpg"
             with open(filename, 'wb') as f:
                 f.write(response.content)
-            logger.info("✅ Картинка через Pollinations")
+            logger.info(f"✅ Картинка создана (Pollinations)")
             return filename
-        else:
-            logger.error(f"❌ Ошибка Pollinations: {response.status_code}")
-            return None
     except Exception as e:
         logger.error(f"❌ Ошибка: {e}")
-        return None
+    return None
 
 def generate_post_image(theme):
     prompts = [
-        f"inspiring abstract art {theme}, warm colors, motivational",
-        f"beautiful landscape {theme}, sunrise, hope, positive energy",
-        f"minimalist illustration {theme}, soft pastel, calm, art"
+        f"inspiring abstract art {theme}, warm colors, motivational, masterpiece",
+        f"beautiful landscape {theme}, sunrise, hope, positive energy, 4k",
+        f"minimalist illustration {theme}, soft pastel, calm, self discovery"
     ]
     return generate_image(random.choice(prompts))
 
+def generate_test_image(topic):
+    prompts = [
+        f"psychological test illustration {topic}, introspection, deep colors",
+        f"abstract psychology art {topic}, meditation, self reflection",
+        f"mental health awareness {topic}, healing, balance"
+    ]
+    return generate_image(random.choice(prompts))
+
+def generate_result_image(text, result):
+    prompt = f"minimalist psychology illustration, {text}, {result}, inspirational"
+    return generate_image(prompt)
+
 # ============================================================
-# 📝 ГЕНЕРАТОРЫ КОНТЕНТА
+# ГЕНЕРАТОРЫ КОНТЕНТА
 # ============================================================
 
 def generate_post(topic):
     system = f"Ты — автор канала о психологии. Напиши пост на тему '{topic}'. Минимум 600 символов. Без пафоса. Добавь вопрос в конце."
-    return ask_ai(system, f"Тема: {topic}", 3000)
+    user = f"Тема: {topic}."
+    return ask_ai(system, user, 3000)
 
 def generate_test_questions(topic, count=10):
     depth = "диагностика личности" if count == 10 else "полный психологический разбор"
     
     system = f"""ТЫ — КЛИНИЧЕСКИЙ ПСИХОЛОГ С 25-ЛЕТНИМ СТАЖЕМ.
-
-    Составь {count} глубоких, НО ПРОСТЫХ вопросов для {depth} на тему "{topic}".
-    Верни ТОЛЬКО JSON.
-
-    ФОРМАТ:
-    [{{"question": "вопрос?", "options": {{"A": "вариант 1", "B": "вариант 2", "C": "вариант 3", "D": "вариант 4"}}, "scores": {{"A": 0, "B": 1, "C": 2, "D": 3}}}}]
-    
-    НЕ ДОБАВЛЯЙ НИЧЕГО КРОМЕ JSON."""
+Составь {count} глубоких, НО ПРОСТЫХ вопросов для {depth} на тему "{topic}".
+Вопросы должны быть ПОНЯТНЫМИ по форме, но МОЩНЫМИ по смыслу. Без терминов.
+Верни ТОЛЬКО JSON.
+ФОРМАТ:
+[{{"question": "простой вопрос?", "options": {{"A": "вариант 1", "B": "вариант 2", "C": "вариант 3", "D": "вариант 4"}}, "scores": {{"A": 0, "B": 1, "C": 2, "D": 3}}}}]
+НЕ ДОБАВЛЯЙ НИЧЕГО КРОМЕ JSON."""
     
     response = ask_ai(system, "", 4000)
     if not response:
@@ -517,133 +462,142 @@ def generate_test_questions(topic, count=10):
 def generate_analysis(topic, answers, score, total, is_paid):
     if is_paid:
         system = """ТЫ — ВЕДУЩИЙ ПСИХОЛОГ-КОУЧ.
-        Проведи полный разбор личности.
-        Структура: портрет, 2-3 инсайта, корень проблемы, план на неделю.
-        Объем: 1500+ знаков."""
+Проведи полный разбор личности.
+Структура: портрет, 2-3 инсайта, корень проблемы, план на неделю.
+Объем: 1500+ знаков."""
+        user = f"Тема: {topic}\nОтветы: {answers}\nБаллы: {score} из {total}"
     else:
         system = """ТЫ — ОПЫТНЫЙ ПСИХОЛОГ.
-        Дай краткий анализ.
-        Структура: главная проблема, 1 инсайт, вопрос, шаг.
-        Объем: 800+ знаков."""
+Дай краткий анализ.
+Структура: главная проблема, 1 инсайт, вопрос, шаг.
+Объем: 800+ знаков."""
+        user = f"Тема: {topic}\nОтветы: {answers}\nБаллы: {score} из {total}"
     
-    user = f"Тема: {topic}\nОтветы: {answers}\nБаллы: {score} из {total}"
     return ask_ai(system, user, 4000 if is_paid else 2000)
 
 def generate_consultation_questions():
     system = """ТЫ — ВЕДУЩИЙ ПСИХОЛОГ-НЛП-ПРАКТИК.
-
-    Составь 25 глубоких, но ПРОСТЫХ вопросов для сеанса.
-    Верни ТОЛЬКО JSON.
-    Формат: [{"question": "вопрос?"}]
-    НЕ ДОБАВЛЯЙ НИЧЕГО КРОМЕ JSON."""
+Составь 25 вопросов для сеанса психотерапии.
+Вопросы простые по форме, но сильные по смыслу. БЕЗ терминов. НЛП-техники.
+Верни ТОЛЬКО JSON.
+Формат: [{"question": "простой, но сильный вопрос?"}]
+НЕ ДОБАВЛЯЙ НИЧЕГО КРОМЕ JSON."""
     
     response = ask_ai(system, "", 4000)
     if not response:
         return None
-    
     start = response.find('[')
     end = response.rfind(']') + 1
     if start == -1 or end == -1:
         return None
-    
     try:
         questions = json.loads(response[start:end])
         return questions[:25]
-    except:
+    except Exception:
         return None
 
 def generate_consultation_analysis(answers, chat_id, session_id):
     system = """ТЫ — ВЕДУЩИЙ ПСИХОЛОГ-КОУЧ.
-    Проведи полный разбор личности.
-    Структура: главная рана, как управляет, корень, 3 шага, заключение.
-    Объем: 1500+ знаков."""
+Проведи полный разбор личности.
+Структура: главная рана, как управляет, корень, 3 шага, заключение.
+Объем: 1500+ знаков."""
     
-    response = ask_ai(system, f"Ответы:\n{answers}", 4000)
+    user = f"Ответы:\n{answers}"
+    response = ask_ai(system, user, 4000)
     if response:
         try:
-            c.execute("""INSERT INTO consultation_history 
-                         (chat_id, session_id, questions, answers, analysis) 
-                         VALUES (?, ?, ?, ?, ?)""",
-                      (chat_id, session_id, "", answers, response))
-            conn.commit()
-            
-            c.execute("UPDATE stats SET consultations_count = consultations_count + 1")
-            conn.commit()
+            with DB_LOCK:
+                c = get_conn().cursor()
+                c.execute("""INSERT INTO consultation_history (chat_id, session_id, questions, answers, analysis) VALUES (?, ?, ?, ?, ?)""",
+                          (chat_id, session_id, "", answers, response))
+                c.execute("UPDATE stats SET consultations_count = consultations_count + 1")
+                c.connection.commit()
+                c.connection.close()
             
             checkin_date = datetime.now(TIMEZONE) + timedelta(days=3)
-            c.execute("""INSERT INTO checkins (chat_id, session_id, checkin_date) 
-                         VALUES (?, ?, ?)""",
-                      (chat_id, session_id, checkin_date.isoformat()))
-            conn.commit()
-            
+            with DB_LOCK:
+                c = get_conn().cursor()
+                c.execute("""INSERT INTO checkins (chat_id, session_id, checkin_date) VALUES (?, ?, ?)""",
+                          (chat_id, session_id, checkin_date.isoformat()))
+                c.connection.commit()
+                c.connection.close()
         except Exception as e:
-            logger.error(f"Ошибка сохранения: {e}")
-        
+            logger.error(f"Ошибка сохранения консультации: {e}")
         return response
     return None
 
 # ============================================================
-# 🔗 РЕФЕРАЛЬНАЯ СИСТЕМА
+# РЕФЕРАЛЬНАЯ СИСТЕМА
 # ============================================================
+
+BOT_USERNAME = None  # кеш
+
+def get_bot_username():
+    global BOT_USERNAME
+    if BOT_USERNAME:
+        return BOT_USERNAME
+    try:
+        BOT_USERNAME = bot.get_me().username
+    except Exception:
+        BOT_USERNAME = "bot"
+    return BOT_USERNAME
 
 def generate_referral_code(chat_id):
     return f"REF{chat_id}{random.randint(1000,9999)}"[:10]
 
 def get_referral_link(chat_id):
-    c.execute("SELECT referral_code FROM users WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
-    if row and row[0]:
-        code = row[0]
-    else:
-        code = generate_referral_code(chat_id)
-        c.execute("UPDATE users SET referral_code = ? WHERE chat_id = ?", (code, chat_id))
-        conn.commit()
-    
-    bot_info = bot.get_me()
-    return f"https://t.me/{bot_info.username}?start=ref_{code}"
+    with DB_LOCK:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT referral_code FROM users WHERE chat_id = ?", (chat_id,))
+        row = c.fetchone()
+        if row and row[0]:
+            code = row[0]
+        else:
+            code = generate_referral_code(chat_id)
+            c.execute("UPDATE users SET referral_code = ? WHERE chat_id = ?", (code, chat_id))
+            conn.commit()
+        conn.close()
+    return f"https://t.me/{get_bot_username()}?start=ref_{code}"
 
 def process_referral(referral_code, new_user_id):
-    c.execute("SELECT chat_id FROM users WHERE referral_code = ?", (referral_code,))
-    row = c.fetchone()
-    if row:
-        referrer_id = row[0]
-        if referrer_id != new_user_id:
-            c.execute("SELECT id FROM referrals WHERE referrer_id = ? AND referred_id = ?", 
-                     (referrer_id, new_user_id))
-            if not c.fetchone():
-                c.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)",
-                         (referrer_id, new_user_id))
-                conn.commit()
-                
-                c.execute("UPDATE stats SET referrals_count = referrals_count + 1")
-                conn.commit()
-                
-                c.execute("UPDATE users SET bonus_tests = bonus_tests + 1 WHERE chat_id = ?",
-                         (referrer_id,))
-                conn.commit()
-                
-                try:
-                    bot.send_message(
-                        referrer_id,
-                        "🎉 По твоей ссылке пришёл новый пользователь!\n"
-                        "Ты получил БЕСПЛАТНЫЙ тест из 20 вопросов."
-                    )
-                except:
-                    pass
-                return True
+    with DB_LOCK:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT chat_id FROM users WHERE referral_code = ?", (referral_code,))
+        row = c.fetchone()
+        if row:
+            referrer_id = row[0]
+            if referrer_id != new_user_id:
+                c.execute("SELECT id FROM referrals WHERE referrer_id = ? AND referred_id = ?", (referrer_id, new_user_id))
+                if not c.fetchone():
+                    c.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, new_user_id))
+                    c.execute("UPDATE stats SET referrals_count = referrals_count + 1")
+                    c.execute("UPDATE users SET bonus_tests = bonus_tests + 1 WHERE chat_id = ?", (referrer_id,))
+                    conn.commit()
+                    conn.close()
+                    try:
+                        bot.send_message(referrer_id, 
+                            "🎉 По твоей ссылке пришёл новый пользователь!\n"
+                            "Ты получил БЕСПЛАТНЫЙ тест из 20 вопросов в подарок.\n"
+                            "Нажми «🎯 Пройти тест» и выбери платный тест — он будет бесплатным!")
+                    except Exception:
+                        pass
+                    return True
+        conn.close()
     return False
 
 # ============================================================
-# 💳 ОПЛАТА ЧЕРЕЗ TELEGRAM STARS
+# ОПЛАТА (Telegram Stars)
 # ============================================================
 
 def send_invoice(chat_id, product, amount):
     if product == "test_20":
         title = "🧠 Тест из 20 вопросов"
-        desc = "Полный психологический разбор личности"
+        desc = "Полный психологический разбор личности. Результат через 30 секунд."
     elif product == "coach":
         title = "🎯 Коуч-сеанс"
-        desc = "25 вопросов + полный разбор + план действий"
+        desc = "25 вопросов + полный разбор + план действий + задания на неделю."
     else:
         return False
     
@@ -656,15 +610,12 @@ def send_invoice(chat_id, product, amount):
             currency="XTR",
             prices=[{"label": title, "amount": amount}],
             invoice_payload=product,
-            need_name=False,
-            need_phone_number=False,
-            need_email=False,
-            need_shipping_address=False,
+            need_name=False, need_phone_number=False, need_email=False, need_shipping_address=False,
             is_flexible=False
         )
         return True
     except Exception as e:
-        logger.error(f"Ошибка инвойса: {e}")
+        logger.error(f"Ошибка отправки инвойса: {e}")
         return False
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
@@ -682,180 +633,62 @@ def handle_successful_payment(message):
         payment = message.successful_payment
         product = payment.invoice_payload
         
-        c.execute("""INSERT INTO payments (chat_id, amount, product, status) 
-                     VALUES (?, ?, ?, 'completed')""",
-                  (chat_id, payment.total_amount, product))
-        conn.commit()
-        
-        c.execute("UPDATE stats SET total_revenue = total_revenue + ?", 
-                 (payment.total_amount,))
-        conn.commit()
+        with DB_LOCK:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("""INSERT INTO payments (chat_id, amount, product, status) VALUES (?, ?, ?, ?)""",
+                      (chat_id, payment.total_amount, product, "completed"))
+            conn.commit()
+            conn.close()
         
         if product == "test_20":
-            c.execute("UPDATE users SET bonus_tests = bonus_tests + 1 WHERE chat_id = ?", 
-                     (chat_id,))
-            conn.commit()
+            # Выдаём доступ (1 кредит платного теста)
+            with DB_LOCK:
+                conn = get_conn()
+                c = conn.cursor()
+                c.execute("UPDATE users SET bonus_tests = bonus_tests + 1 WHERE chat_id = ?", (chat_id,))
+                conn.commit()
+                conn.close()
             
-            c.execute("UPDATE stats SET paid_test_count = paid_test_count + 1")
-            conn.commit()
-            
-            mk = telebot.types.InlineKeyboardMarkup()
-            mk.add(telebot.types.InlineKeyboardButton("🎯 Пройти платный тест", 
-                     callback_data="start_paid_test"))
             bot.send_message(
-                chat_id,
+                chat_id, 
                 "✅ Оплата прошла успешно!\n\n"
-                "Ты получил доступ к платному тесту из 20 вопросов.\n"
-                "Нажми кнопку ниже, чтобы начать.",
-                reply_markup=mk
+                "Ты можешь пройти полный тест из 20 вопросов.\n"
+                "Нажми «🎯 Пройти тест» и выбери «💎 Платный» — он будет бесплатным для тебя.",
+                reply_markup=get_main_menu(chat_id)
             )
             
         elif product == "coach":
-            c.execute("UPDATE stats SET coach_count = coach_count + 1")
-            conn.commit()
+            # Выдаём кредит коуч-сеанса (для обычных пользователей)
+            with DB_LOCK:
+                conn = get_conn()
+                c = conn.cursor()
+                c.execute("UPDATE users SET coach_credits = coach_credits + 1 WHERE chat_id = ?", (chat_id,))
+                c.execute("UPDATE stats SET coach_count = coach_count + 1")
+                conn.commit()
+                conn.close()
             
             mk = telebot.types.InlineKeyboardMarkup()
-            mk.add(telebot.types.InlineKeyboardButton("🎯 Начать коуч-сеанс", 
-                     callback_data="start_coach"))
+            mk.add(telebot.types.InlineKeyboardButton("🎯 Начать коуч-сеанс", callback_data="start_coach_now"))
             bot.send_message(
                 chat_id,
                 "✅ Оплата прошла успешно!\n\n"
-                "Ты получил доступ к коуч-сеансу.\n"
+                "У тебя активирован коуч-сеанс.\n"
                 "Нажми кнопку ниже, чтобы начать.",
                 reply_markup=mk
             )
-            
     except Exception as e:
-        logger.error(f"Ошибка оплаты: {e}")
+        logger.error(f"Ошибка обработки оплаты: {e}")
 
 # ============================================================
-# ⏰ ПЛАНИРОВЩИК
-# ============================================================
-
-LAST_RUN = {}
-
-def get_schedule():
-    now = datetime.now(TIMEZONE)
-    tasks = []
-    key = now.strftime('%Y-%m-%d %H')
-    
-    for hour in [10, 16, 20]:
-        if now.hour == hour and now.minute == 0:
-            if LAST_RUN.get('post') != key:
-                LAST_RUN['post'] = key
-                
-                c.execute("SELECT topic FROM used_topics ORDER BY used_at DESC LIMIT 20")
-                used = [row[0] for row in c.fetchall()]
-                available = [t for t in CHANNEL_THEMES if t not in used]
-                if not available:
-                    c.execute("DELETE FROM used_topics")
-                    conn.commit()
-                    available = CHANNEL_THEMES
-                
-                topic = random.choice(available)
-                c.execute("INSERT INTO used_topics (topic) VALUES (?)", (topic,))
-                conn.commit()
-                tasks.append({"type": "post", "topic": topic})
-    
-    if now.hour == 13 and now.minute == 0:
-        if LAST_RUN.get('test') != key:
-            LAST_RUN['test'] = key
-            tasks.append({"type": "test", "topic": random.choice(CHANNEL_THEMES)})
-    
-    if now.minute == 0:
-        c.execute("""SELECT chat_id, session_id FROM checkins 
-                     WHERE is_done = 0 AND checkin_date <= ?""",
-                  (now.isoformat(),))
-        checkins = c.fetchall()
-        for chat_id, session_id in checkins:
-            tasks.append({"type": "checkin", "chat_id": chat_id, "session_id": session_id})
-            c.execute("UPDATE checkins SET is_done = 1 WHERE chat_id = ? AND session_id = ?",
-                     (chat_id, session_id))
-            conn.commit()
-    
-    return tasks
-
-def scheduler_loop():
-    while True:
-        try:
-            for task in get_schedule():
-                if task["type"] == "post":
-                    post = generate_post(task["topic"])
-                    if post:
-                        img = generate_post_image(task["topic"])
-                        if img:
-                            with open(img, 'rb') as photo:
-                                caption = post[:900] + "..." if len(post) > 900 else post
-                                bot.send_photo(CHANNEL_ID, photo, caption=caption)
-                            os.remove(img)
-                            if len(post) > 900:
-                                bot.send_message(CHANNEL_ID, post)
-                        else:
-                            bot.send_message(CHANNEL_ID, post)
-                        
-                        c.execute("UPDATE stats SET posts_count = posts_count + 1")
-                        conn.commit()
-                
-                elif task["type"] == "test":
-                    questions = generate_test_questions(task["topic"], 10)
-                    if questions:
-                        bot_info = bot.get_me()
-                        test_text = f"🔮 ТЕСТ ДНЯ: «{task['topic'].title()}» (10 вопросов)\n\n"
-                        for i, q in enumerate(questions[:3], 1):
-                            test_text += f"{i}. {q['question']}\n"
-                        test_text += f"\n🎯 Пройти полный тест: @{bot_info.username}?start=test_daily"
-                        bot.send_message(CHANNEL_ID, test_text)
-                
-                elif task["type"] == "checkin":
-                    try:
-                        bot.send_message(
-                            task["chat_id"],
-                            "🧠 Привет! Прошло 3 дня после нашего сеанса.\n\n"
-                            "Как ты себя чувствуешь? Что изменилось?\n"
-                            "Напиши мне — я здесь."
-                        )
-                    except:
-                        pass
-            
-            time.sleep(30)
-        except Exception as e:
-            logger.error(f"Ошибка планировщика: {e}")
-            time.sleep(60)
-
-# ============================================================
-# 🌐 ВЕБ-СЕРВЕР
-# ============================================================
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return f"✅ {BOT_NAME} v{BOT_VERSION}"
-
-@app.route('/health')
-def health():
-    return {"status": "ok", "time": datetime.now().isoformat()}
-
-def run_flask():
-    try:
-        port = int(os.environ.get('PORT', 5000))
-        app.run(host='0.0.0.0', port=port, debug=False)
-    except Exception as e:
-        logger.error(f"Ошибка веб-сервера: {e}")
-
-threading.Thread(target=run_flask, daemon=True).start()
-logger.info("✅ Веб-сервер запущен")
-
-# ============================================================
-# 📋 МЕНЮ
+# МЕНЮ
 # ============================================================
 
 def get_main_menu(chat_id):
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     mk.add('🚀 Старт', '🎯 Пройти тест')
-    mk.add('🎯 Сеанс коучинга', '🎫 Активировать промокод')
-    mk.add('🎁 Активировать подарок', '📤 Поделиться')
-    mk.add('❤️ О канале')
+    mk.add('🎫 Активировать промокод', '🎁 Активировать подарок')
+    mk.add('📤 Поделиться', '❤️ О канале')
     if chat_id in ADMIN_IDS:
         mk.add('👑 Админ-панель')
     return mk
@@ -866,8 +699,7 @@ def admin_menu():
     mk.add('🖼 Картинка в канал', '🎯 Сеанс коучинга')
     mk.add('🎁 Создать подарок', '🎫 Создать промокод')
     mk.add('📊 Статистика', '⏰ Расписание')
-    mk.add('📋 Логи', '🧪 Тест AI')
-    mk.add('👑 Главное меню')
+    mk.add('📋 Логи', '👑 Главное меню')
     return mk
 
 def test_type_menu():
@@ -879,7 +711,7 @@ def test_type_menu():
 
 def theme_menu():
     mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    for theme in CHANNEL_THEMES[:15]:
+    for theme in CHANNEL_THEMES:
         mk.add(theme.title())
     mk.add('🔙 Назад')
     return mk
@@ -900,24 +732,54 @@ def session_diagnostic_menu():
     return mk
 
 # ============================================================
-# 💾 СЕССИИ
+# СЕССИИ
 # ============================================================
 
 sessions = {}
 consultations = {}
 
 def save_user(chat_id, username=None, first_name=None, last_name=None):
-    code = generate_referral_code(chat_id)
-    c.execute("""INSERT OR IGNORE INTO users 
-                 (chat_id, username, first_name, last_name, referral_code) 
-                 VALUES (?, ?, ?, ?, ?)""",
-              (chat_id, username, first_name, last_name, code))
-    conn.commit()
-    c.execute("UPDATE stats SET users_count = (SELECT COUNT(*) FROM users)")
-    conn.commit()
+    try:
+        with DB_LOCK:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("""INSERT OR IGNORE INTO users (chat_id, username, first_name, last_name, referral_code) 
+                         VALUES (?, ?, ?, ?, ?)""",
+                      (chat_id, username, first_name, last_name, generate_referral_code(chat_id)))
+            conn.commit()
+            c.execute("UPDATE stats SET users_count = (SELECT COUNT(*) FROM users)")
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        logger.error(f"Ошибка save_user: {e}")
 
 # ============================================================
-# 🚀 ОСНОВНЫЕ ОБРАБОТЧИКИ
+# БЕЗОПАСНАЯ ОТПРАВКА С FALLBACK MARKDOWN
+# ============================================================
+
+def safe_send_message(chat_id, text, **kwargs):
+    try:
+        bot.send_message(chat_id, text, **kwargs)
+    except Exception:
+        try:
+            bot.send_message(chat_id, text)
+        except Exception as e:
+            logger.error(f"Ошибка safe_send: {e}")
+
+def safe_send_photo(chat_id, photo, caption=None, **kwargs):
+    try:
+        cap = caption[:1024] if caption and len(caption) > 1024 else caption
+        bot.send_photo(chat_id, photo, caption=cap, **kwargs)
+    except Exception:
+        try:
+            bot.send_photo(chat_id, photo)
+            if caption:
+                bot.send_message(chat_id, caption)
+        except Exception as e:
+            logger.error(f"Ошибка safe_send_photo: {e}")
+
+# ============================================================
+# ОСНОВНЫЕ ОБРАБОТЧИКИ
 # ============================================================
 
 @bot.message_handler(commands=['start'])
@@ -931,29 +793,14 @@ def start(message):
             param = message.text.split(' ', 1)[1]
             if param.startswith('ref_'):
                 process_referral(param.replace('ref_', ''), chat_id)
-            elif param.startswith('test_'):
-                test_id = param.replace('test_', '')
-                c.execute("SELECT topic, questions FROM daily_tests WHERE id = ?", (test_id,))
-                row = c.fetchone()
-                if row:
-                    topic, questions_json = row
-                    questions = json.loads(questions_json)
-                    sessions[chat_id] = {
-                        'topic': topic,
-                        'questions': questions,
-                        'answers': [],
-                        'q': 0,
-                        'scores': [],
-                        'is_paid': False
-                    }
-                    bot.send_message(chat_id, f"🔮 Загружаю тест: {topic}")
-                    send_question(chat_id)
-                    return
+            elif param == 'test_daily':
+                # Обработка диплинка теста из канала
+                bot.send_message(chat_id, "🧠 Готов пройти тест дня?", reply_markup=get_main_menu(chat_id))
+                return
         
-        bot.send_message(chat_id, "🌟 Добро пожаловать в Жизнь+!", 
-                        reply_markup=get_main_menu(chat_id))
+        bot.send_message(chat_id, "🌟 Добро пожаловать в Жизнь+!", reply_markup=get_main_menu(chat_id))
     except Exception as e:
-        logger.error(f"Ошибка start: {e}")
+        logger.error(f"Ошибка в start: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🚀 Старт')
 def start_button(message):
@@ -964,18 +811,24 @@ def about_channel(message):
     try:
         text = """🧠 ЖИЗНЬ+ — канал о том, что внутри.
 
-Мы не даём ответов. Мы даём вопросы, которые меняют.
+Мы не даём ответы. Мы даём вопросы, которые меняют.
 
-Автор — не психолог, не коуч.
-Он — человек, который прошёл через своё дерьмо.
+Здесь ты не найдёшь:
+— мотивационных лозунгов
+— «ты уникален, просто поверь»
+— воды и пустых советов
+
+Здесь ты найдёшь:
+— честные мысли без прикрас
+— посты, которые застревают в голове
+— тесты, которые вскрывают то, что ты прятал
 
 Подписывайся. Испытай на прочность свою честность.
 
 @zhizn_plus"""
         
         mk = telebot.types.InlineKeyboardMarkup()
-        mk.add(telebot.types.InlineKeyboardButton("📢 Перейти в канал", 
-                 url="https://t.me/zhizn_plus"))
+        mk.add(telebot.types.InlineKeyboardButton("📢 Перейти в канал", url="https://t.me/zhizn_plus"))
         bot.send_message(message.chat.id, text, reply_markup=mk)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -984,26 +837,29 @@ def about_channel(message):
 def share_result(message):
     try:
         chat_id = message.chat.id
-        link = get_referral_link(chat_id)
-        bot.send_message(
-            chat_id,
-            f"🧠 Я прохожу тесты в боте Жизнь+ и узнаю о себе новое.\n\n"
-            f"Присоединяйся: {link}\n\n#жизньплюс #психология"
-        )
-        bot.send_message(chat_id, "✅ Поделился! Спасибо!")
+        referral_link = get_referral_link(chat_id)
+        text = f"""🧠 Я прохожу тесты в боте Жизнь+ и узнаю о себе новое.
+
+Присоединяйся — это честно, глубоко и без пафоса.
+
+🎯 Пройти тест: {referral_link}
+
+#жизньплюс #психология #саморазвитие"""
+        bot.send_message(chat_id, text)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-
-# ============================================================
-# 🎯 ТЕСТЫ
-# ============================================================
 
 @bot.message_handler(func=lambda m: m.text == '🎯 Пройти тест')
 def choose_test_type(message):
     try:
         chat_id = message.chat.id
-        c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
-        row = c.fetchone()
+        with DB_LOCK:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
+            row = c.fetchone()
+            conn.close()
+        
         if row and row[0] > 0:
             mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
             mk.add('🧠 Бесплатный (10 вопросов)')
@@ -1017,7 +873,7 @@ def choose_test_type(message):
 
 @bot.message_handler(func=lambda m: m.text == '🔙 Назад')
 def back_to_main(message):
-    start(message)
+    bot.send_message(message.chat.id, "🏠 Главное меню", reply_markup=get_main_menu(message.chat.id))
 
 @bot.message_handler(func=lambda m: m.text == '🧠 Бесплатный (10 вопросов)')
 def free_test(message):
@@ -1026,11 +882,20 @@ def free_test(message):
 @bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов) — 50 Stars')
 def paid_test(message):
     chat_id = message.chat.id
-    c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
+    with DB_LOCK:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
+        row = c.fetchone()
+        conn.close()
+    
     if row and row[0] > 0:
-        c.execute("UPDATE users SET bonus_tests = bonus_tests - 1 WHERE chat_id = ?", (chat_id,))
-        conn.commit()
+        with DB_LOCK:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("UPDATE users SET bonus_tests = bonus_tests - 1 WHERE chat_id = ?", (chat_id,))
+            conn.commit()
+            conn.close()
         show_topics(message, 'paid', 20)
     else:
         send_invoice(chat_id, "test_20", PRICE_TEST_20)
@@ -1038,398 +903,221 @@ def paid_test(message):
 @bot.message_handler(func=lambda m: m.text == '💎 Платный (20 вопросов) — БЕСПЛАТНО (бонус)')
 def paid_test_bonus(message):
     chat_id = message.chat.id
-    c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
+    with DB_LOCK:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
+        row = c.fetchone()
+        conn.close()
+    
     if row and row[0] > 0:
-        c.execute("UPDATE users SET bonus_tests = bonus_tests - 1 WHERE chat_id = ?", (chat_id,))
-        conn.commit()
+        with DB_LOCK:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("UPDATE users SET bonus_tests = bonus_tests - 1 WHERE chat_id = ?", (chat_id,))
+            conn.commit()
+            conn.close()
         show_topics(message, 'paid', 20)
     else:
-        bot.send_message(chat_id, "❌ Нет бонусных тестов.", reply_markup=test_type_menu())
-
-@bot.callback_query_handler(func=lambda c: c.data == 'start_paid_test')
-def start_paid_test_callback(c):
-    chat_id = c.message.chat.id
-    c.answer()
-    c.execute("SELECT bonus_tests FROM users WHERE chat_id = ?", (chat_id,))
-    row = c.fetchone()
-    if row and row[0] > 0:
-        c.execute("UPDATE users SET bonus_tests = bonus_tests - 1 WHERE chat_id = ?", (chat_id,))
-        conn.commit()
-        show_topics(c.message, 'paid', 20)
-    else:
-        bot.send_message(chat_id, "❌ У тебя нет бонусных тестов.", 
-                        reply_markup=get_main_menu(chat_id))
+        bot.send_message(chat_id, "❌ У тебя нет бонусных тестов.", reply_markup=test_type_menu())
 
 def show_topics(message, test_type, count):
     try:
         mk = telebot.types.InlineKeyboardMarkup(row_width=2)
-        for topic in CHANNEL_THEMES[:15]:
-            mk.add(telebot.types.InlineKeyboardButton(
-                topic.title(), 
-                callback_data=f"{test_type}_{topic}_{count}"
-            ))
+        for topic in CHANNEL_THEMES:
+            mk.add(telebot.types.InlineKeyboardButton(topic.title(), callback_data=f"{test_type}_{topic}_{count}"))
         mk.add(telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
-        bot.send_message(
-            message.chat.id, 
-            f"🔮 Выбери тему:\n\n{count} вопросов", 
-            reply_markup=mk
-        )
+        bot.send_message(message.chat.id, f"🔮 Выбери тему:\n\n{count} вопросов", reply_markup=mk)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith(('free', 'paid')))
+@bot.callback_query_handler(func=lambda c: c.data.startswith(('free_', 'paid_')))
 def topic_callback(c):
     try:
-        bot.answer_callback_query(c.id, "⏳ Генерация теста...")
-        
-        test_type, topic, count = c.data.split('_')
+        c.answer()  # отвечаем сразу, пока идёт генерация
+        test_type, topic, count = c.data.split('_', 2)
         is_paid = test_type == 'paid'
         count = int(count)
         chat_id = c.message.chat.id
         
-        bot.send_message(chat_id, "⏳ Генерация теста...\n⏱ Ожидание до 30 сек")
+        # Сначала обновляем UI
+        try:
+            bot.edit_message_text("⏳ Генерация теста...\n⏱ Ожидание до 40 сек", chat_id, c.message.message_id)
+        except Exception:
+            pass
         
-        def generate():
-            try:
-                questions = generate_test_questions(topic, count)
-                if not questions:
+        # Генерируем в отдельном потоке, чтобы не блокировать
+        def _generate():
+            questions = generate_test_questions(topic, count)
+            if not questions:
+                try:
                     bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.")
-                    return
-                
-                sessions[chat_id] = {
-                    'topic': topic,
-                    'questions': questions,
-                    'answers': [],
-                    'q': 0,
-                    'scores': [],
-                    'is_paid': is_paid
-                }
-                send_question(chat_id)
-            except Exception as e:
-                logger.error(f"Ошибка генерации: {e}")
-                bot.send_message(chat_id, f"❌ Ошибка: {str(e)}")
+                except Exception:
+                    pass
+                return
+            
+            sessions[chat_id] = {
+                'topic': topic,
+                'questions': questions,
+                'answers': [],
+                'q': 0,
+                'scores': [],
+                'is_paid': is_paid
+            }
+            try:
+                bot.delete_message(chat_id, c.message.message_id)
+            except Exception:
+                pass
+            send_question(chat_id)
         
-        threading.Thread(target=generate, daemon=True).start()
-        
+        threading.Thread(target=_generate, daemon=True).start()
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        bot.send_message(c.message.chat.id, f"❌ Ошибка: {str(e)}")
+        try:
+            c.answer()
+        except Exception:
+            pass
 
 @bot.callback_query_handler(func=lambda c: c.data == 'cancel')
 def cancel_callback(c):
     try:
         bot.delete_message(c.message.chat.id, c.message.message_id)
-        bot.send_message(c.message.chat.id, "❌ Отменено", 
-                        reply_markup=get_main_menu(c.message.chat.id))
+        bot.send_message(c.message.chat.id, "❌ Отменено", reply_markup=get_main_menu(c.message.chat.id))
     except Exception as e:
         logger.error(f"Ошибка: {e}")
     c.answer()
 
 def send_question(chat_id):
-    s = sessions.get(chat_id)
-    if not s or s['q'] >= len(s['questions']):
-        finish_test(chat_id) if s else bot.send_message(
-            chat_id, "❌ Сессия не найдена."
-        )
-        return
-    
-    q = s['questions'][s['q']]
-    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    for opt, txt in q['options'].items():
-        mk.add(f"{opt}) {txt}")
-    mk.add('⏹ Прервать тест')
-    bot.send_message(
-        chat_id, 
-        f"🔮 Вопрос {s['q']+1}/{len(s['questions'])}\n\n{q['question']}", 
-        reply_markup=mk
-    )
+    try:
+        s = sessions.get(chat_id)
+        if not s:
+            bot.send_message(chat_id, "❌ Сессия не найдена.")
+            return
+        if s['q'] >= len(s['questions']):
+            finish_test(chat_id)
+            return
+        q = s['questions'][s['q']]
+        mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        for opt, txt in q['options'].items():
+            mk.add(f"{opt}) {txt}")
+        mk.add('⏹ Прервать тест')
+        bot.send_message(chat_id, f"🔮 Вопрос {s['q']+1}/{len(s['questions'])}\n\n{q['question']}", reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '⏹ Прервать тест')
 def stop_test(message):
-    chat_id = message.chat.id
-    if chat_id in sessions:
-        del sessions[chat_id]
-    bot.send_message(chat_id, "⏹ Тест прерван", reply_markup=get_main_menu(chat_id))
+    try:
+        chat_id = message.chat.id
+        if chat_id in sessions:
+            del sessions[chat_id]
+        bot.send_message(chat_id, "⏹ Тест прерван", reply_markup=get_main_menu(chat_id))
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text and m.text[0].upper() in 'ABCD')
 def handle_answer(message):
-    chat_id = message.chat.id
-    s = sessions.get(chat_id)
-    if not s or s['q'] >= len(s['questions']):
-        return
-    
-    letter = message.text[0].upper()
-    q = s['questions'][s['q']]
-    score = q['scores'].get(letter, 0)
-    s['answers'].append(letter)
-    s['scores'].append(score)
-    s['q'] += 1
-    send_question(chat_id)
+    try:
+        chat_id = message.chat.id
+        s = sessions.get(chat_id)
+        if not s or s['q'] >= len(s['questions']):
+            return
+        letter = message.text[0].upper()
+        q = s['questions'][s['q']]
+        s['answers'].append(letter)
+        s['scores'].append(q['scores'].get(letter, 0))
+        s['q'] += 1
+        send_question(chat_id)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 def finish_test(chat_id):
-    s = sessions.get(chat_id)
-    if not s:
-        return
-    
-    score = sum(s['scores'])
-    total = len(s['questions']) * 3
-    answers = ', '.join(s['answers'])
-    is_paid = s.get('is_paid', False)
-    
-    if is_paid:
-        c.execute("UPDATE stats SET paid_test_count = paid_test_count + 1")
-    else:
-        c.execute("UPDATE stats SET free_count = free_count + 1")
-    conn.commit()
-    
-    c.execute("SELECT avg_test_score FROM stats")
-    row = c.fetchone()
-    current_avg = row[0] if row else 0
-    new_score = (score / total) * 100
-    new_avg = (current_avg + new_score) / 2 if current_avg > 0 else new_score
-    c.execute("UPDATE stats SET avg_test_score = ?", (new_avg,))
-    conn.commit()
-    
-    bot.send_message(
-        chat_id, 
-        f"📊 Тест завершен!\nРезультат: {score} из {total}\n⏳ Анализирую...\n⏱ Ожидание до 30 сек"
-    )
-    
-    analysis = generate_analysis(s['topic'], answers, score, total, is_paid)
-    
-    if analysis:
-        try:
-            bot.send_message(
-                chat_id, 
-                f"🔍 АНАЛИЗ\n\n{analysis}", 
-                reply_markup=get_main_menu(chat_id), 
-                parse_mode='Markdown'
-            )
-        except:
-            bot.send_message(
-                chat_id, 
-                f"🔍 АНАЛИЗ\n\n{analysis}", 
-                reply_markup=get_main_menu(chat_id)
-            )
+    try:
+        s = sessions.get(chat_id)
+        if not s:
+            return
+        score = sum(s['scores'])
+        total = len(s['questions']) * 3
+        answers = ', '.join(s['answers'])
+        is_paid = s.get('is_paid', False)
         
-        if is_paid:
+        with DB_LOCK:
+            conn = get_conn()
+            c = conn.cursor()
+            if is_paid:
+                c.execute("UPDATE stats SET paid_test_count = paid_test_count + 1")
+            else:
+                c.execute("UPDATE stats SET free_count = free_count + 1")
+            conn.commit()
+            conn.close()
+        
+        bot.send_message(chat_id, f"📊 Тест завершен!\nРезультат: {score} из {total}\n⏳ Анализирую...\n⏱ Ожидание до 40 сек")
+        analysis = generate_analysis(s['topic'], answers, score, total, is_paid)
+        
+        if analysis:
             mk = telebot.types.InlineKeyboardMarkup()
-            mk.add(telebot.types.InlineKeyboardButton(
-                "🎯 Коуч-сеанс за 100 Stars", 
-                callback_data="buy_coach"
-            ))
-            bot.send_message(
-                chat_id, 
-                "🎯 Хочешь разобраться глубже? Пройди коуч-сеанс.", 
-                reply_markup=mk
-            )
-    else:
-        bot.send_message(chat_id, "❌ AI не ответил.", reply_markup=get_main_menu(chat_id))
-    
-    if chat_id in sessions:
-        del sessions[chat_id]
+            if is_paid:
+                mk.add(telebot.types.InlineKeyboardButton("🎯 Коуч-сеанс за 100 Stars", callback_data="buy_coach"))
+            safe_send_message(chat_id, f"🔍 АНАЛИЗ\n\n{analysis}", reply_markup=mk, parse_mode='Markdown')
+            bot.send_message(chat_id, "Готово!", reply_markup=get_main_menu(chat_id))
+        else:
+            bot.send_message(chat_id, "❌ AI не ответил. Попробуй позже.", reply_markup=get_main_menu(chat_id))
+        if chat_id in sessions:
+            del sessions[chat_id]
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.callback_query_handler(func=lambda c: c.data == 'buy_coach')
 def buy_coach(c):
-    send_invoice(c.message.chat.id, "coach", PRICE_COACH)
+    try:
+        send_invoice(c.message.chat.id, "coach", PRICE_COACH)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
     c.answer()
 
 # ============================================================
-# 👑 АДМИН-ПАНЕЛЬ
+# КОУЧ-СЕАНС (ОТКРЫТ ДЛЯ ВСЕХ, КТО ОПЛАТИЛ)
 # ============================================================
 
-@bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
-def admin_panel(message):
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
-
-@bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
-def back_to_main_from_admin(message):
-    start(message)
-
-@bot.message_handler(func=lambda m: m.text == '🧪 Тест AI')
-def test_ai(message):
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "🧪 Тестирую AI...")
-        response = ask_ai("Ты — тестовый помощник.", "Напиши одно слово: 'ОК'", max_tokens=100)
-        if response:
-            bot.send_message(message.chat.id, f"✅ AI отвечает: {response}")
-        else:
-            bot.send_message(message.chat.id, "❌ AI не ответил.")
-
-# ============================================================
-# 📝 ПОСТЫ В КАНАЛ
-# ============================================================
-
-@bot.message_handler(func=lambda m: m.text == '📝 Новый пост')
-def new_post_menu(message):
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "📝 Что отправляем в канал?", 
-                        reply_markup=post_type_menu())
-
-@bot.message_handler(func=lambda m: m.text == '📝 Пост без картинки')
-def post_without_image(message):
-    if message.chat.id in ADMIN_IDS:
-        sessions[message.chat.id] = {"action": "post_without_image"}
-        bot.send_message(message.chat.id, "📝 Выбери тему:", reply_markup=theme_menu())
-
-@bot.message_handler(func=lambda m: m.text == '🖼 Пост с картинкой')
-def post_with_image(message):
-    if message.chat.id in ADMIN_IDS:
-        sessions[message.chat.id] = {"action": "post_with_image"}
-        bot.send_message(message.chat.id, "📝 Выбери тему для поста с супер-картинкой:", 
-                        reply_markup=theme_menu())
-
-@bot.message_handler(func=lambda m: m.text == '🖼 Только картинка')
-def only_image(message):
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "📝 Введи описание для супер-картинки:")
-        bot.register_next_step_handler(message, process_only_image)
-
-def process_only_image(message):
-    chat_id = message.chat.id
-    prompt = message.text
-    bot.send_message(chat_id, "🖼 Генерация супер-картинки...")
-    img = generate_image(prompt)
-    if img:
-        with open(img, 'rb') as photo:
-            bot.send_photo(CHANNEL_ID, photo, caption=f"🖼 {prompt}")
-        os.remove(img)
-        c.execute("UPDATE stats SET images_generated = images_generated + 1")
-        conn.commit()
-        bot.send_message(chat_id, "✅ Супер-картинка отправлена!", reply_markup=admin_menu())
-    else:
-        bot.send_message(chat_id, "❌ Ошибка.", reply_markup=admin_menu())
-
-# ============================================================
-# 📊 СТАТИСТИКА
-# ============================================================
-
-@bot.message_handler(func=lambda m: m.text == '📊 Статистика')
-def admin_stats(message):
-    if message.chat.id in ADMIN_IDS:
-        c.execute("""SELECT free_count, paid_test_count, coach_count, promo_used, 
-                            users_count, posts_count, tests_created, images_generated, 
-                            consultations_count, referrals_count, gifts_used, 
-                            avg_test_score, total_revenue FROM stats""")
+def has_coach_credit(chat_id):
+    """Проверяет, есть ли у пользователя доступ к коуч-сеансу (оплата/подарок/админ)."""
+    if chat_id in ADMIN_IDS:
+        return True
+    with DB_LOCK:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT coach_credits FROM users WHERE chat_id = ?", (chat_id,))
         row = c.fetchone()
-        
-        c.execute("SELECT COUNT(*) FROM users")
-        users = c.fetchone()[0]
-        
-        c.execute("SELECT COUNT(*) FROM gifts")
-        gifts = c.fetchone()[0]
-        
-        c.execute("SELECT COUNT(*) FROM checkins WHERE is_done = 0")
-        checkins = c.fetchone()[0]
-        
-        revenue_rub = row[12] * 1.8 if row[12] else 0
-        
-        bot.send_message(
-            message.chat.id,
-            f"📊 СТАТИСТИКА\n\n"
-            f"👥 Пользователей: {users}\n"
-            f"🧠 Бесплатных тестов: {row[0]}\n"
-            f"💎 Платных тестов: {row[1]}\n"
-            f"🎯 Коуч-сеансов: {row[2]}\n"
-            f"🎫 Промокодов: {row[3]}\n"
-            f"📤 Постов: {row[5]}\n"
-            f"🧠 Тестов создано: {row[6]}\n"
-            f"🖼 Супер-картинок: {row[7]}\n"
-            f"🎯 Консультаций: {row[8]}\n"
-            f"👥 Рефералов: {row[9]}\n"
-            f"🎁 Подарков: {row[10]}\n"
-            f"📊 Средний балл: {row[11]:.1f}%\n"
-            f"💰 Доход (Stars): {row[12]}\n"
-            f"💰 Доход (₽): ~{revenue_rub:.0f} руб.\n"
-            f"⏳ Чек-инов: {checkins}",
-            reply_markup=admin_menu()
-        )
+        conn.close()
+    return (row and row[0] and row[0] > 0)
 
-# ============================================================
-# ⏰ РАСПИСАНИЕ
-# ============================================================
+def consume_coach_credit(chat_id):
+    if chat_id in ADMIN_IDS:
+        return True
+    with DB_LOCK:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT coach_credits FROM users WHERE chat_id = ?", (chat_id,))
+        row = c.fetchone()
+        if row and row[0] and row[0] > 0:
+            c.execute("UPDATE users SET coach_credits = coach_credits - 1 WHERE chat_id = ?", (chat_id,))
+            conn.commit()
+            conn.close()
+            return True
+        conn.close()
+    return False
 
-@bot.message_handler(func=lambda m: m.text == '⏰ Расписание')
-def show_schedule(message):
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(
-            message.chat.id,
-            "⏰ РАСПИСАНИЕ (Юрга UTC+7)\n\n"
-            "📝 ПОСТЫ: 10:00, 16:00, 20:00\n"
-            "🧠 ТЕСТ: 13:00\n"
-            "🧠 ЧЕК-ИН: через 3 дня после сеанса",
-            reply_markup=admin_menu()
-        )
-
-# ============================================================
-# 📋 ЛОГИ
-# ============================================================
-
-@bot.message_handler(func=lambda m: m.text == '📋 Логи')
-def show_logs(message):
-    if message.chat.id in ADMIN_IDS and os.path.exists(LOG_PATH):
-        with open(LOG_PATH, 'r', encoding='utf-8') as f:
-            logs = ''.join(f.readlines()[-100:])
-        bot.send_message(
-            message.chat.id, 
-            f"📋 ПОСЛЕДНИЕ 100 СТРОК:\n\n{logs[-4000:]}", 
-            reply_markup=admin_menu()
-        )
-    else:
-        bot.send_message(message.chat.id, "❌ Логов нет.", reply_markup=admin_menu())
-
-# ============================================================
-# 🖼 КАРТИНКИ В КАНАЛ
-# ============================================================
-
-@bot.message_handler(func=lambda m: m.text == '🖼 Картинка в канал')
-def image_to_channel(message):
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "📝 Введи описание для супер-картинки:")
-        bot.register_next_step_handler(message, process_image_only_standalone)
-
-def process_image_only_standalone(message):
-    chat_id = message.chat.id
-    prompt = message.text
-    bot.send_message(chat_id, "🖼 Генерация супер-картинки...")
-    img = generate_image(prompt)
-    if img:
-        with open(img, 'rb') as photo:
-            bot.send_photo(CHANNEL_ID, photo, caption=f"🖼 {prompt}")
-        os.remove(img)
-        c.execute("UPDATE stats SET images_generated = images_generated + 1")
-        conn.commit()
-        bot.send_message(chat_id, "✅ Супер-картинка отправлена!", reply_markup=admin_menu())
-    else:
-        bot.send_message(chat_id, "❌ Ошибка.", reply_markup=admin_menu())
-
-# ============================================================
-# 🧠 ТЕСТЫ В КАНАЛ
-# ============================================================
-
-@bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
-def test_to_channel_start(message):
-    if message.chat.id in ADMIN_IDS:
-        sessions[message.chat.id] = {"action": "test_to_channel"}
-        bot.send_message(message.chat.id, "🧠 Выбери тему для теста:", reply_markup=theme_menu())
-
-# ============================================================
-# 🎯 СЕАНС КОУЧИНГА
-# ============================================================
-
-@bot.message_handler(func=lambda m: m.text == '🎯 Сеанс коучинга')
-def start_consultation(message):
-    chat_id = message.chat.id
-    start_consultation_logic(chat_id)
-
-def start_consultation_logic(chat_id):
-    c.execute("SELECT id FROM payments WHERE chat_id = ? AND (product = 'coach' OR product = 'coach_gift') AND status = 'completed'", (chat_id,))
-    if not c.fetchone():
+@bot.callback_query_handler(func=lambda c: c.data == 'start_coach_now')
+def start_coach_from_payment(c):
+    chat_id = c.message.chat.id
+    c.answer()
+    if not has_coach_credit(chat_id):
         send_invoice(chat_id, "coach", PRICE_COACH)
         return
-    
+    _start_consultation_flow(chat_id)
+
+def _start_consultation_flow(chat_id):
+    """Общий вход в коуч-сеанс."""
     bot.send_message(
         chat_id,
         "🧠 ПЕРЕД СЕАНСОМ\n\n"
@@ -1438,13 +1126,28 @@ def start_consultation_logic(chat_id):
         reply_markup=session_diagnostic_menu()
     )
 
+@bot.message_handler(func=lambda m: m.text == '🎯 Сеанс коучинга')
+def start_consultation(message):
+    chat_id = message.chat.id
+    # Админ: свободный доступ. Обычный: списываем кредит или просим оплатить.
+    if chat_id not in ADMIN_IDS:
+        if not has_coach_credit(chat_id):
+            send_invoice(chat_id, "coach", PRICE_COACH)
+            return
+    _start_consultation_flow(chat_id)
+
 @bot.message_handler(func=lambda m: m.text in ['😔 Подавленность', '😰 Тревога', '😡 Раздражение', '😌 Спокойствие', '😊 Радость'])
 def handle_diagnostic(message):
-    chat_id = message.chat.id
-    diagnostic = message.text
-    consultations[chat_id] = {"diagnostic": diagnostic}
-    
-    warning = f"""⚠️ ВНИМАНИЕ
+    try:
+        chat_id = message.chat.id
+        # Защита: только если реально инициирован сеанс (есть кредит или админ)
+        if not has_coach_credit(chat_id):
+            return
+        
+        diagnostic = message.text
+        consultations[chat_id] = {"diagnostic": diagnostic}
+        
+        warning = f"""⚠️ ВНИМАНИЕ
 
 Ты выбрал: {diagnostic}
 
@@ -1452,295 +1155,496 @@ def handle_diagnostic(message):
 Если станет тяжело — нажми «⏹ Завершить сеанс».
 
 Начать сеанс?"""
-    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    mk.add('✅ Начать', '❌ Отмена')
-    bot.send_message(chat_id, warning, reply_markup=mk)
+        mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        mk.add('✅ Начать', '❌ Отмена')
+        bot.send_message(chat_id, warning, reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
-@bot.message_handler(func=lambda m: m.text == '❌ Отмена')
+@bot.message_handler(func=lambda m: m.text == '❌ Отмена' and m.chat.id in consultations)
 def cancel_consultation(message):
-    chat_id = message.chat.id
-    if chat_id in consultations:
-        del consultations[chat_id]
-    bot.send_message(chat_id, "❌ Отменено.", reply_markup=get_main_menu(chat_id))
+    try:
+        chat_id = message.chat.id
+        if chat_id in consultations:
+            del consultations[chat_id]
+        bot.send_message(chat_id, "❌ Сеанс отменён.", reply_markup=get_main_menu(chat_id))
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
-@bot.message_handler(func=lambda m: m.text == '✅ Начать')
+@bot.message_handler(func=lambda m: m.text == '✅ Начать' and m.chat.id in consultations)
 def confirm_consultation(message):
-    chat_id = message.chat.id
-    
-    c.execute("SELECT id FROM payments WHERE chat_id = ? AND (product = 'coach' OR product = 'coach_gift') AND status = 'completed'", (chat_id,))
-    if not c.fetchone():
-        send_invoice(chat_id, "coach", PRICE_COACH)
-        return
-    
-    diagnostic = consultations.get(chat_id, {}).get("diagnostic", "неизвестно")
-    
-    bot.send_message(
-        chat_id,
-        f"🎯 Начинаем сеанс.\nТвоё состояние: {diagnostic}\n\n"
-        "Генерирую вопросы специально для тебя...\n⏱ Ожидание до 30 сек"
-    )
-    
-    def generate():
-        try:
+    try:
+        chat_id = message.chat.id
+        
+        # Списываем кредит (если не админ)
+        if not consume_coach_credit(chat_id):
+            bot.send_message(chat_id, "❌ Нет доступных сеансов.", reply_markup=get_main_menu(chat_id))
+            if chat_id in consultations:
+                del consultations[chat_id]
+            return
+        
+        diagnostic = consultations.get(chat_id, {}).get("diagnostic", "неизвестно")
+        
+        bot.send_message(
+            chat_id,
+            f"🎯 Начинаем сеанс.\nТвоё состояние: {diagnostic}\n\n"
+            "Генерирую вопросы специально для тебя...\n⏱ Ожидание до 40 сек",
+            reply_markup=telebot.types.ReplyKeyboardRemove()
+        )
+        
+        def _gen():
             questions = generate_consultation_questions()
             if not questions:
-                bot.send_message(chat_id, "❌ Не удалось сгенерировать вопросы.", 
-                               reply_markup=get_main_menu(chat_id))
+                try:
+                    bot.send_message(chat_id, "❌ Не удалось сгенерировать вопросы.", reply_markup=get_main_menu(chat_id))
+                except Exception:
+                    pass
                 if chat_id in consultations:
                     del consultations[chat_id]
                 return
             
-            c.execute("""INSERT INTO consultation_sessions 
-                         (chat_id, questions, diagnostic) 
-                         VALUES (?, ?, ?)""",
-                      (chat_id, json.dumps(questions), diagnostic))
-            conn.commit()
-            session_id = c.lastrowid
+            with DB_LOCK:
+                conn = get_conn()
+                c = conn.cursor()
+                c.execute("""INSERT INTO consultation_sessions (chat_id, questions, current_q, is_active, is_paid) VALUES (?, ?, ?, ?, ?)""",
+                          (chat_id, json.dumps(questions), 0, 1, 1))
+                conn.commit()
+                session_id = c.lastrowid
+                conn.close()
             
             consultations[chat_id] = {
+                "session_id": session_id,
                 "questions": questions,
                 "answers": [],
-                "current_q": 0,
-                "session_id": session_id,
+                "q": 0,
                 "diagnostic": diagnostic
             }
             send_consultation_question(chat_id)
-        except Exception as e:
-            logger.error(f"Ошибка: {e}")
-            bot.send_message(chat_id, f"❌ Ошибка: {str(e)}", 
-                           reply_markup=get_main_menu(chat_id))
-    
-    threading.Thread(target=generate, daemon=True).start()
+        
+        threading.Thread(target=_gen, daemon=True).start()
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 def send_consultation_question(chat_id):
-    s = consultations.get(chat_id)
-    if not s or s['current_q'] >= len(s['questions']):
-        finish_consultation(chat_id)
-        return
-    
-    q = s['questions'][s['current_q']]
-    mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-    mk.add('⏹ Завершить сеанс')
-    
-    bot.send_message(
-        chat_id,
-        f"🧠 Вопрос {s['current_q']+1}/{len(s['questions'])}\n\n{q['question']}",
-        reply_markup=mk
-    )
+    try:
+        s = consultations.get(chat_id)
+        if not s:
+            bot.send_message(chat_id, "❌ Сессия не найдена.", reply_markup=get_main_menu(chat_id))
+            return
+        if s['q'] >= len(s['questions']):
+            finish_consultation(chat_id)
+            return
+        q = s['questions'][s['q']]
+        mk = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+        mk.add('⏹ Завершить сеанс')
+        bot.send_message(chat_id, f"🔮 ВОПРОС {s['q']+1}/{len(s['questions'])}\n\n{q['question']}", reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
-@bot.message_handler(func=lambda m: m.text == '⏹ Завершить сеанс' and m.chat.id in consultations)
-def stop_consultation(message):
-    chat_id = message.chat.id
-    if chat_id in consultations:
-        s = consultations[chat_id]
-        if len(s['answers']) >= 5:
+@bot.message_handler(func=lambda m: m.text == '⏹ Завершить сеанс')
+def finish_consultation_manual(message):
+    try:
+        chat_id = message.chat.id
+        if chat_id in consultations:
             finish_consultation(chat_id)
         else:
-            del consultations[chat_id]
-            bot.send_message(chat_id, "⏹ Сеанс прерван. Жаль, что не дошли до конца.", 
-                           reply_markup=get_main_menu(chat_id))
-
-@bot.message_handler(func=lambda m: m.text and m.chat.id in consultations and m.text != '⏹ Завершить сеанс')
-def handle_consultation_answer(message):
-    chat_id = message.chat.id
-    s = consultations.get(chat_id)
-    if not s:
-        return
-    
-    s['answers'].append(message.text)
-    s['current_q'] += 1
-    send_consultation_question(chat_id)
+            bot.send_message(chat_id, "❌ Нет активного сеанса.", reply_markup=get_main_menu(chat_id))
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 def finish_consultation(chat_id):
-    s = consultations.get(chat_id)
-    if not s:
-        return
-    
-    answers_text = '\n\n'.join([f"{i+1}. {ans}" for i, ans in enumerate(s['answers'])])
-    
-    bot.send_message(chat_id, "🧠 Анализирую твои ответы...\n⏱ Это займёт до 60 секунд")
-    
-    def generate():
-        analysis = generate_consultation_analysis(answers_text, chat_id, s['session_id'])
-        if analysis:
+    try:
+        s = consultations.get(chat_id)
+        if not s:
+            bot.send_message(chat_id, "❌ Сессия не найдена.", reply_markup=get_main_menu(chat_id))
+            return
+        
+        with DB_LOCK:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("UPDATE consultation_sessions SET is_active = 0 WHERE id = ?", (s['session_id'],))
+            conn.commit()
+            conn.close()
+        
+        if len(s['answers']) == 0:
+            bot.send_message(chat_id, "❌ Сеанс прерван.", reply_markup=get_main_menu(chat_id))
+            if chat_id in consultations:
+                del consultations[chat_id]
+            return
+        
+        bot.send_message(chat_id, "📊 Обрабатываю ответы...\n⏱ Это займёт 1–2 минуты.", reply_markup=get_main_menu(chat_id))
+        
+        def background_analysis():
             try:
-                bot.send_message(
-                    chat_id, 
-                    f"🔍 РАЗБОР ЛИЧНОСТИ\n\n{analysis}", 
-                    reply_markup=get_main_menu(chat_id), 
-                    parse_mode='Markdown'
-                )
-            except:
-                bot.send_message(
-                    chat_id, 
-                    f"🔍 РАЗБОР ЛИЧНОСТИ\n\n{analysis}", 
-                    reply_markup=get_main_menu(chat_id)
-                )
-            
-            tasks = """📝 ЗАДАНИЯ НА НЕДЕЛЮ:
-
-1. Каждое утро записывай 3 вещи, за которые ты благодарен(на)
-2. Замечай свои эмоции и записывай их в дневник
-3. Делай упражнение «Я выбираю...» вместо «Я должен...»
-
-Через 3 дня я спрошу, как у тебя дела."""
-            bot.send_message(chat_id, tasks)
-        else:
-            bot.send_message(chat_id, "❌ Не удалось получить анализ. Попробуй позже.", 
-                           reply_markup=get_main_menu(chat_id))
+                answers_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(s['answers'])])
+                analysis = generate_consultation_analysis(answers_text, chat_id, s['session_id'])
+                
+                tasks = [
+                    "🟢 Задание 1: Напиши 3 вещи, за которые ты благодарен сегодня",
+                    "🟢 Задание 2: Скажи себе в зеркале: 'Я справлюсь'",
+                    "🟢 Задание 3: 5 минут тишины без телефона"
+                ]
+                tasks_text = "\n\n📋 ТВОИ ЗАДАНИЯ НА СЕГОДНЯ:\n" + "\n".join(tasks)
+                
+                if analysis:
+                    safe_send_message(chat_id, f"🔮 ПОЛНЫЙ РАЗБОР\n\n{analysis}\n\n{tasks_text}", parse_mode='Markdown')
+                else:
+                    safe_send_message(chat_id, f"❌ Не удалось сгенерировать анализ.\n\n{tasks_text}")
+            except Exception as e:
+                logger.error(f"Ошибка фонового анализа: {e}")
+                bot.send_message(chat_id, "❌ Ошибка при анализе.", reply_markup=get_main_menu(chat_id))
+        
+        threading.Thread(target=background_analysis, daemon=True).start()
         
         if chat_id in consultations:
             del consultations[chat_id]
-    
-    threading.Thread(target=generate, daemon=True).start()
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+# Обработчик ответов в коуч-сеансе (любое сообщение, пока активна сессия)
+@bot.message_handler(func=lambda m: m.chat.id in consultations, content_types=['text'])
+def handle_consultation_answer(message):
+    try:
+        chat_id = message.chat.id
+        if chat_id not in consultations:
+            return
+        s = consultations[chat_id]
+        # Игнорируем спец-команды
+        if message.text in ['✅ Начать', '❌ Отмена', '⏹ Завершить сеанс']:
+            return
+        if s['q'] >= len(s['questions']):
+            return
+        s['answers'].append(message.text)
+        s['q'] += 1
+        with DB_LOCK:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("UPDATE consultation_sessions SET current_q = ?, answers = ? WHERE id = ?",
+                      (s['q'], json.dumps(s['answers']), s['session_id']))
+            conn.commit()
+            conn.close()
+        send_consultation_question(chat_id)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 # ============================================================
-# 🎫 ПРОМОКОДЫ
+# АДМИН-ПАНЕЛЬ
 # ============================================================
+
+@bot.message_handler(func=lambda m: m.text == '👑 Админ-панель')
+def admin_panel(message):
+    if message.chat.id not in ADMIN_IDS:
+        return
+    bot.send_message(message.chat.id, "👑 Админ-панель", reply_markup=admin_menu())
+
+@bot.message_handler(func=lambda m: m.text == '👑 Главное меню')
+def back_to_main_from_admin(message):
+    start(message)
+
+# -------------------- НОВЫЙ ПОСТ --------------------
+
+@bot.message_handler(func=lambda m: m.text == '📝 Новый пост')
+def new_post_menu(message):
+    if message.chat.id not in ADMIN_IDS: return
+    bot.send_message(message.chat.id, "📝 Что отправляем в канал?", reply_markup=post_type_menu())
+
+@bot.message_handler(func=lambda m: m.text == '📝 Пост без картинки')
+def post_without_image(message):
+    if message.chat.id not in ADMIN_IDS: return
+    sessions[message.chat.id] = {"action": "post_without_image"}
+    bot.send_message(message.chat.id, "📝 Выбери тему для поста:", reply_markup=theme_menu())
+
+@bot.message_handler(func=lambda m: m.text == '🖼 Пост с картинкой')
+def post_with_image(message):
+    if message.chat.id not in ADMIN_IDS: return
+    sessions[message.chat.id] = {"action": "post_with_image"}
+    bot.send_message(message.chat.id, "📝 Выбери тему для поста с супер-картинкой:", reply_markup=theme_menu())
+
+@bot.message_handler(func=lambda m: m.text == '🖼 Только картинка')
+def only_image(message):
+    if message.chat.id not in ADMIN_IDS: return
+    bot.send_message(message.chat.id, "📝 Введи описание для супер-картинки:")
+    bot.register_next_step_handler(message, process_only_image)
+
+def process_only_image(message):
+    try:
+        chat_id = message.chat.id
+        prompt = message.text
+        bot.send_message(chat_id, "🖼 Генерация супер-картинки...\n⏱ Ожидание до 40 сек")
+        image_path = generate_image(prompt)
+        if image_path:
+            with open(image_path, 'rb') as photo:
+                safe_send_photo(CHANNEL_ID, photo, caption=f"🖼 {prompt[:900]}")
+            os.remove(image_path)
+            with DB_LOCK:
+                conn = get_conn(); c = conn.cursor()
+                c.execute("UPDATE stats SET images_generated = images_generated + 1"); conn.commit(); conn.close()
+            bot.send_message(chat_id, "✅ Супер-картинка отправлена в канал!", reply_markup=admin_menu())
+        else:
+            bot.send_message(chat_id, "❌ Не удалось создать картинку.", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+# -------------------- СТАТИСТИКА --------------------
+
+@bot.message_handler(func=lambda m: m.text == '📊 Статистика')
+def admin_stats(message):
+    if message.chat.id not in ADMIN_IDS: return
+    try:
+        with DB_LOCK:
+            conn = get_conn(); c = conn.cursor()
+            c.execute("SELECT free_count, paid_test_count, coach_count, promo_used, users_count, posts_count, tests_created, images_generated, consultations_count, referrals_count, gifts_used FROM stats")
+            stats_row = c.fetchone()
+            c.execute("SELECT COUNT(*) FROM users"); users_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM gifts"); gifts_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM checkins WHERE is_done = 0"); pending_checkins = c.fetchone()[0]
+            conn.close()
+        
+        if not stats_row:
+            bot.send_message(message.chat.id, "❌ Статистика пуста.", reply_markup=admin_menu())
+            return
+        
+        # Правильные индексы:
+        # 0:free 1:paid 2:coach 3:promo 4:users 5:posts 6:tests_created 7:images 8:consult 9:referrals 10:gifts
+        stats_text = f"""📊 СТАТИСТИКА
+
+👥 Пользователей: {users_count}
+🧠 Бесплатных тестов: {stats_row[0]}
+💎 Платных тестов: {stats_row[1]}
+🎯 Коуч-сеансов: {stats_row[2]}
+🎫 Промокодов использовано: {stats_row[3]}
+📤 Постов: {stats_row[5]}
+🧠 Тестов создано: {stats_row[6]}
+🖼 Супер-картинок: {stats_row[7]}
+🎯 Консультаций: {stats_row[8]}
+👥 Рефералов: {stats_row[9]}
+🎁 Подарков использовано: {stats_row[10]}
+🎁 Подарков создано: {gifts_count}
+⏳ Чек-инов: {pending_checkins}"""
+        bot.send_message(message.chat.id, stats_text, reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+# -------------------- РАСПИСАНИЕ --------------------
+
+@bot.message_handler(func=lambda m: m.text == '⏰ Расписание')
+def show_schedule(message):
+    if message.chat.id not in ADMIN_IDS: return
+    schedule_text = """⏰ РАСПИСАНИЕ (Asia/Novokuznetsk)
+
+📝 ПОСТЫ:
+• 10:00 — утренний
+• 16:00 — дневной
+• 20:00 — вечерний
+
+🧠 ТЕСТ:
+• 13:00 — тест дня (10 вопросов)
+
+🧠 ЧЕК-ИН:
+• Через 3 дня после сеанса
+
+Темы из 7 постоянных."""
+    bot.send_message(message.chat.id, schedule_text, reply_markup=admin_menu())
+
+# -------------------- ЛОГИ --------------------
+
+@bot.message_handler(func=lambda m: m.text == '📋 Логи')
+def show_logs(message):
+    chat_id = message.chat.id
+    if chat_id not in ADMIN_IDS: return
+    if os.path.exists(LOG_PATH):
+        try:
+            with open(LOG_PATH, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                last_lines = lines[-50:] if len(lines) > 50 else lines
+                logs = ''.join(last_lines)
+                if len(logs) > 3800:
+                    logs = logs[-3800:]
+                bot.send_message(chat_id, f"📋 ПОСЛЕДНИЕ 50 СТРОК ЛОГОВ:\n\n```\n{logs}\n```", parse_mode='Markdown')
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ Ошибка: {e}")
+    else:
+        bot.send_message(chat_id, "❌ Файл логов не найден.")
+
+# -------------------- КАРТИНКИ В КАНАЛ --------------------
+
+@bot.message_handler(func=lambda m: m.text == '🖼 Картинка в канал')
+def image_to_channel(message):
+    if message.chat.id not in ADMIN_IDS: return
+    bot.send_message(message.chat.id, "📝 Введи описание для супер-картинки:")
+    bot.register_next_step_handler(message, process_image_only_standalone)
+
+def process_image_only_standalone(message):
+    try:
+        chat_id = message.chat.id
+        prompt = message.text
+        bot.send_message(chat_id, "🖼 Генерация супер-картинки...\n⏱ Ожидание до 40 сек")
+        image_path = generate_image(prompt)
+        if image_path:
+            with open(image_path, 'rb') as photo:
+                safe_send_photo(CHANNEL_ID, photo, caption=f"🖼 {prompt[:900]}")
+            os.remove(image_path)
+            with DB_LOCK:
+                conn = get_conn(); c = conn.cursor()
+                c.execute("UPDATE stats SET images_generated = images_generated + 1"); conn.commit(); conn.close()
+            bot.send_message(chat_id, "✅ Супер-картинка отправлена в канал!", reply_markup=admin_menu())
+        else:
+            bot.send_message(chat_id, "❌ Не удалось создать картинку.", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+# -------------------- ТЕСТЫ В КАНАЛ --------------------
+
+@bot.message_handler(func=lambda m: m.text == '🧠 Тест в канал')
+def test_to_channel_start(message):
+    if message.chat.id not in ADMIN_IDS: return
+    sessions[message.chat.id] = {"action": "test_to_channel"}
+    bot.send_message(message.chat.id, "🧠 Выбери тему для теста:", reply_markup=theme_menu())
+
+# -------------------- ПРОМОКОДЫ --------------------
 
 @bot.message_handler(func=lambda m: m.text == '🎫 Создать промокод')
 def create_promo(message):
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "🎫 Введите код (латиница, 3+ символов):")
-        bot.register_next_step_handler(message, process_create_promo)
+    if message.chat.id not in ADMIN_IDS: return
+    bot.send_message(message.chat.id, "🎫 Введите код (латиница, 3+ символов):")
+    bot.register_next_step_handler(message, process_create_promo)
 
 def process_create_promo(message):
-    chat_id = message.chat.id
-    code = message.text.strip().upper()
-    if code == "ОТМЕНА" or len(code) < 3:
-        bot.send_message(chat_id, "❌ Отменено или слишком короткий.", reply_markup=admin_menu())
-        return
     try:
-        c.execute("INSERT INTO promocodes (code, created_by) VALUES (?, ?)", (code, chat_id))
-        conn.commit()
-        bot.send_message(
-            chat_id, 
-            f"✅ Промокод создан!\n\n📌 Код: {code}\nДаёт 1 бесплатный тест из 20 вопросов.",
-            reply_markup=admin_menu()
-        )
-    except sqlite3.IntegrityError:
-        bot.send_message(chat_id, "❌ Уже существует.", reply_markup=admin_menu())
+        chat_id = message.chat.id
+        code = message.text.strip().upper()
+        if code == "ОТМЕНА" or code == "CANCEL":
+            bot.send_message(chat_id, "❌ Отменено")
+            return
+        if not code or len(code) < 3:
+            bot.send_message(chat_id, "❌ Минимум 3 символа", reply_markup=admin_menu())
+            return
+        try:
+            with DB_LOCK:
+                conn = get_conn(); c = conn.cursor()
+                c.execute("INSERT INTO promocodes (code, created_by, created_at) VALUES (?, ?, ?)",
+                          (code, chat_id, datetime.now().isoformat()))
+                conn.commit(); conn.close()
+            bot.send_message(chat_id, f"✅ Промокод создан!\n\n📌 Код: `{code}`\nДаёт 1 бесплатный тест из 20 вопросов.", parse_mode='Markdown', reply_markup=admin_menu())
+        except sqlite3.IntegrityError:
+            bot.send_message(chat_id, "❌ Уже существует", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🎫 Активировать промокод')
 def activate_promo(message):
-    bot.send_message(message.chat.id, "🎫 Введите промокод:", 
-                    reply_markup=telebot.types.ReplyKeyboardRemove())
+    bot.send_message(message.chat.id, "🎫 Введите промокод:", reply_markup=telebot.types.ReplyKeyboardRemove())
     bot.register_next_step_handler(message, process_promo)
 
 def process_promo(message):
-    chat_id = message.chat.id
-    code = message.text.strip().upper()
-    c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
-    row = c.fetchone()
-    if not row:
-        bot.send_message(chat_id, "❌ Неверный код.", reply_markup=get_main_menu(chat_id))
-        return
-    if row[1] != 0:
-        bot.send_message(chat_id, "❌ Уже использован.", reply_markup=get_main_menu(chat_id))
-        return
-    c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?",
-             (chat_id, datetime.now().isoformat(), row[0]))
-    conn.commit()
-    c.execute("UPDATE stats SET promo_used = promo_used + 1")
-    conn.commit()
-    c.execute("UPDATE users SET bonus_tests = bonus_tests + 1 WHERE chat_id = ?", (chat_id,))
-    conn.commit()
-    bot.send_message(
-        chat_id, 
-        "🎉 Промокод активирован! Ты получил 1 бесплатный тест из 20 вопросов. Нажми «🎯 Пройти тест» и выбери платный.",
-        reply_markup=get_main_menu(chat_id)
-    )
+    try:
+        chat_id = message.chat.id
+        code = message.text.strip().upper()
+        with DB_LOCK:
+            conn = get_conn(); c = conn.cursor()
+            c.execute("SELECT id, used_by FROM promocodes WHERE code = ?", (code,))
+            row = c.fetchone()
+            if not row:
+                conn.close()
+                bot.send_message(chat_id, "❌ Неверный код", reply_markup=get_main_menu(chat_id)); return
+            promo_id, used_by = row
+            if used_by != 0:
+                conn.close()
+                bot.send_message(chat_id, "❌ Уже использован", reply_markup=get_main_menu(chat_id)); return
+            c.execute("UPDATE promocodes SET used_by = ?, used_at = ? WHERE id = ?", 
+                      (chat_id, datetime.now().isoformat(), promo_id))
+            c.execute("UPDATE stats SET promo_used = promo_used + 1")
+            c.execute("UPDATE users SET bonus_tests = bonus_tests + 1 WHERE chat_id = ?", (chat_id,))
+            conn.commit(); conn.close()
+        bot.send_message(chat_id, "🎉 Промокод активирован! Ты получил 1 бесплатный тест из 20 вопросов. Нажми «🎯 Пройти тест» и выбери платный.", reply_markup=get_main_menu(chat_id))
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
-# ============================================================
-# 🎁 ПОДАРКИ
-# ============================================================
+# -------------------- ПОДАРКИ --------------------
 
 @bot.message_handler(func=lambda m: m.text == '🎁 Создать подарок')
 def create_gift(message):
-    if message.chat.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "🎁 Введите количество сеансов (1-10):")
-        bot.register_next_step_handler(message, process_gift_max_uses)
+    if message.chat.id not in ADMIN_IDS: return
+    bot.send_message(message.chat.id, "🎁 Введите количество сеансов (1-10):")
+    bot.register_next_step_handler(message, process_gift_max_uses)
 
 def process_gift_max_uses(message):
     try:
-        max_uses = int(message.text.strip())
-        if max_uses < 1 or max_uses > 10:
-            raise ValueError
-        sessions[message.chat.id] = {'gift_max_uses': max_uses}
-        bot.send_message(message.chat.id, "📅 Введите срок действия (дней):")
+        chat_id = message.chat.id
+        try:
+            max_uses = int(message.text.strip())
+            if max_uses < 1 or max_uses > 10: raise ValueError
+        except Exception:
+            bot.send_message(chat_id, "❌ Введите число от 1 до 10.", reply_markup=admin_menu()); return
+        sessions.setdefault(chat_id, {})['gift_max_uses'] = max_uses
+        bot.send_message(chat_id, "📅 Введите срок действия (дней):")
         bot.register_next_step_handler(message, process_gift_expires)
-    except:
-        bot.send_message(message.chat.id, "❌ Введите число от 1 до 10.", reply_markup=admin_menu())
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 def process_gift_expires(message):
     try:
-        days = int(message.text.strip())
-        if days < 1 or days > 365:
-            raise ValueError
         chat_id = message.chat.id
+        try:
+            days = int(message.text.strip())
+            if days < 1 or days > 365: raise ValueError
+        except Exception:
+            bot.send_message(chat_id, "❌ Введите число от 1 до 365.", reply_markup=admin_menu()); return
         max_uses = sessions.get(chat_id, {}).get('gift_max_uses', 1)
         code = "GIFT-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        expires_at = (datetime.now(TIMEZONE) + timedelta(days=days)).isoformat()
-        c.execute("INSERT INTO gifts (code, created_by, max_uses, expires_at) VALUES (?, ?, ?, ?)",
-                 (code, chat_id, max_uses, expires_at))
-        conn.commit()
+        expires_at = (datetime.now() + timedelta(days=days)).isoformat()
+        with DB_LOCK:
+            conn = get_conn(); c = conn.cursor()
+            c.execute("""INSERT INTO gifts (code, created_by, max_uses, expires_at) VALUES (?, ?, ?, ?)""",
+                      (code, chat_id, max_uses, expires_at))
+            conn.commit(); conn.close()
         bot.send_message(
             chat_id,
-            f"✅ ПОДАРОК СОЗДАН!\n\n🎁 Код: {code}\n📊 Сеансов: {max_uses}\n📅 Действует до: {expires_at[:10]}\nДаёт бесплатный коуч-сеанс.",
-            reply_markup=admin_menu()
+            f"✅ ПОДАРОК СОЗДАН!\n\n🎁 Код: `{code}`\n📊 Сеансов: {max_uses}\n📅 Действует до: {expires_at[:10]}\nДаёт бесплатный коуч-сеанс.",
+            parse_mode='Markdown', reply_markup=admin_menu()
         )
-        if chat_id in sessions:
-            del sessions[chat_id]
-    except:
-        bot.send_message(message.chat.id, "❌ Введите число от 1 до 365.", reply_markup=admin_menu())
+        if chat_id in sessions: del sessions[chat_id]
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == '🎁 Активировать подарок')
 def activate_gift_start(message):
-    bot.send_message(message.chat.id, "🎁 Введите код подарка:", 
-                    reply_markup=telebot.types.ReplyKeyboardRemove())
+    bot.send_message(message.chat.id, "🎁 Введите код подарка:", reply_markup=telebot.types.ReplyKeyboardRemove())
     bot.register_next_step_handler(message, process_gift_activation)
 
 def process_gift_activation(message):
-    chat_id = message.chat.id
-    code = message.text.strip().upper()
-    c.execute("SELECT id, max_uses, used_count, expires_at FROM gifts WHERE code = ?", (code,))
-    row = c.fetchone()
-    if not row:
-        bot.send_message(chat_id, "❌ Неверный код.", reply_markup=get_main_menu(chat_id))
-        return
-    gift_id, max_uses, used_count, expires_at = row
-    if expires_at and datetime.now(TIMEZONE).isoformat() > expires_at:
-        bot.send_message(chat_id, "❌ Срок истёк.", reply_markup=get_main_menu(chat_id))
-        return
-    if used_count >= max_uses:
-        bot.send_message(chat_id, "❌ Код использован.", reply_markup=get_main_menu(chat_id))
-        return
-    c.execute("UPDATE gifts SET used_count = used_count + 1 WHERE id = ?", (gift_id,))
-    conn.commit()
-    c.execute("UPDATE stats SET gifts_used = gifts_used + 1")
-    conn.commit()
-    c.execute("INSERT INTO payments (chat_id, amount, product, status) VALUES (?, 0, 'coach_gift', 'completed')", (chat_id,))
-    conn.commit()
-    bot.send_message(
-        chat_id,
-        "🎉 ПОДАРОК АКТИВИРОВАН!\n\nТы получил бесплатный коуч-сеанс.\nНажми кнопку ниже, чтобы начать.",
-        reply_markup=telebot.types.InlineKeyboardMarkup().add(
-            telebot.types.InlineKeyboardButton("🎯 Начать коуч-сеанс", callback_data="start_coach")
-        )
-    )
-
-@bot.callback_query_handler(func=lambda c: c.data == 'start_coach')
-def start_coach_from_callback(c):
-    chat_id = c.message.chat.id
-    c.answer()
-    c.execute("SELECT id FROM payments WHERE chat_id = ? AND (product = 'coach' OR product = 'coach_gift') AND status = 'completed'", (chat_id,))
-    if not c.fetchone():
-        send_invoice(chat_id, "coach", PRICE_COACH)
-        return
-    start_consultation_logic(chat_id)
+    try:
+        chat_id = message.chat.id
+        code = message.text.strip().upper()
+        with DB_LOCK:
+            conn = get_conn(); c = conn.cursor()
+            c.execute("SELECT id, max_uses, used_count, expires_at FROM gifts WHERE code = ?", (code,))
+            row = c.fetchone()
+            if not row:
+                conn.close()
+                bot.send_message(chat_id, "❌ Неверный код.", reply_markup=get_main_menu(chat_id)); return
+            gift_id, max_uses, used_count, expires_at = row
+            if expires_at and datetime.now().isoformat() > expires_at:
+                conn.close()
+                bot.send_message(chat_id, "❌ Срок истёк.", reply_markup=get_main_menu(chat_id)); return
+            if used_count >= max_uses:
+                conn.close()
+                bot.send_message(chat_id, "❌ Код использован.", reply_markup=get_main_menu(chat_id)); return
+            c.execute("UPDATE gifts SET used_count = used_count + 1 WHERE id = ?", (gift_id,))
+            c.execute("UPDATE stats SET gifts_used = gifts_used + 1")
+            # Добавляем кредит коуч-сеанса пользователю
+            c.execute("UPDATE users SET coach_credits = COALESCE(coach_credits, 0) + 1 WHERE chat_id = ?", (chat_id,))
+            conn.commit(); conn.close()
+        
+        mk = telebot.types.InlineKeyboardMarkup()
+        mk.add(telebot.types.InlineKeyboardButton("🎯 Начать коуч-сеанс", callback_data="start_coach_now"))
+        bot.send_message(chat_id, "🎉 ПОДАРОК АКТИВИРОВАН!\n\nТы получил бесплатный коуч-сеанс.", reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+        bot.send_message(chat_id, "❌ Ошибка при активации.", reply_markup=get_main_menu(chat_id))
 
 # ============================================================
-# 🔄 ОБЩИЙ ОБРАБОТЧИК ТЕМ ДЛЯ АДМИНА
+# ОБЩИЙ ОБРАБОТЧИК ДЛЯ ВЫБОРА ТЕМЫ (админ)
 # ============================================================
 
 @bot.message_handler(func=lambda m: m.text in [t.title() for t in CHANNEL_THEMES] and m.chat.id in ADMIN_IDS)
@@ -1751,107 +1655,233 @@ def handle_theme_selection(message):
         action = sessions.get(chat_id, {}).get("action")
         
         if action == "test_to_channel":
-            bot.send_message(chat_id, f"⏳ Генерация теста...")
-            questions = generate_test_questions(theme, 10)
-            if not questions:
-                bot.send_message(chat_id, "❌ Ошибка.", reply_markup=admin_menu())
-                sessions[chat_id] = {}
-                return
-            
-            c.execute("INSERT INTO daily_tests (topic, questions) VALUES (?, ?)",
-                     (theme, json.dumps(questions)))
-            conn.commit()
-            test_id = c.lastrowid
-            c.execute("UPDATE stats SET tests_created = tests_created + 1")
-            conn.commit()
-            
-            bot_info = bot.get_me()
-            test_text = f"🔮 ТЕСТ: «{theme.title()}» (10 вопросов)\n\n"
-            for i, q in enumerate(questions[:5], 1):
-                test_text += f"{i}. {q['question']}\n"
-                for opt, txt in q['options'].items():
-                    test_text += f"   {opt}) {txt}\n"
-                test_text += "\n"
-            test_text += f"... и ещё {len(questions)-5} вопросов\n\n🎯 Пройти полный тест: @{bot_info.username}?start=test_{test_id}"
-            
-            bot.send_message(CHANNEL_ID, test_text)
-            bot.send_message(chat_id, "✅ Тест отправлен!", reply_markup=admin_menu())
+            bot.send_message(chat_id, f"⏳ Генерация теста на тему '{theme}'...")
+            def _gen():
+                questions = generate_test_questions(theme, 10)
+                if not questions:
+                    bot.send_message(chat_id, "❌ AI не ответил.", reply_markup=admin_menu()); return
+                try:
+                    with DB_LOCK:
+                        conn = get_conn(); c = conn.cursor()
+                        c.execute("""INSERT INTO daily_tests (topic, questions, created_at, is_paid) VALUES (?, ?, ?, ?)""",
+                                  (theme, json.dumps(questions), datetime.now().isoformat(), 0))
+                        conn.commit(); conn.close()
+                except Exception:
+                    pass
+                
+                test_text = f"🔮 ТЕСТ: «{theme.title()}» (10 вопросов)\n\n"
+                for i, q in enumerate(questions[:5], 1):
+                    test_text += f"{i}. {q['question']}\n"
+                    for opt, txt in q['options'].items():
+                        test_text += f"   {opt}) {txt}\n"
+                    test_text += "\n"
+                test_text += f"... и ещё {len(questions)-5} вопросов\n\n"
+                test_text += f"🎯 Пройди полный тест в боте: @{get_bot_username()}?start=test_daily"
+                
+                try:
+                    bot.send_message(CHANNEL_ID, test_text)
+                    bot.send_message(chat_id, "✅ Тест отправлен в канал!", reply_markup=admin_menu())
+                except Exception as e:
+                    bot.send_message(chat_id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
+            threading.Thread(target=_gen, daemon=True).start()
             sessions[chat_id] = {}
             
         elif action == "post_without_image":
-            post = generate_post(theme)
-            if post:
-                c.execute("INSERT INTO posts_history (content, topic) VALUES (?, ?)", (post, theme))
-                c.execute("UPDATE stats SET posts_count = posts_count + 1")
-                conn.commit()
+            bot.send_message(chat_id, f"⏳ Генерация поста на тему '{theme}'...")
+            def _gen():
+                post = generate_post(theme)
+                if not post:
+                    bot.send_message(chat_id, "❌ AI не ответил.", reply_markup=admin_menu()); return
+                try:
+                    with DB_LOCK:
+                        conn = get_conn(); c = conn.cursor()
+                        c.execute("INSERT INTO posts_history (content, topic) VALUES (?, ?)", (post, theme))
+                        c.execute("UPDATE stats SET posts_count = posts_count + 1"); conn.commit(); conn.close()
+                except Exception:
+                    pass
                 bot.send_message(CHANNEL_ID, post)
-                bot.send_message(chat_id, "✅ Пост отправлен!", reply_markup=admin_menu())
-            else:
-                bot.send_message(chat_id, "❌ Ошибка.", reply_markup=admin_menu())
+                bot.send_message(chat_id, "✅ Пост отправлен в канал!", reply_markup=admin_menu())
+            threading.Thread(target=_gen, daemon=True).start()
             sessions[chat_id] = {}
             
         elif action == "post_with_image":
-            post = generate_post(theme)
-            if post:
-                img = generate_post_image(theme)
-                c.execute("INSERT INTO posts_history (content, topic, image_path) VALUES (?, ?, ?)",
-                         (post, theme, img or ""))
-                c.execute("UPDATE stats SET posts_count = posts_count + 1")
-                if img:
-                    c.execute("UPDATE stats SET images_generated = images_generated + 1")
-                conn.commit()
+            bot.send_message(chat_id, f"⏳ Генерация поста и супер-картинки на тему '{theme}'...")
+            def _gen():
+                post = generate_post(theme)
+                if not post:
+                    bot.send_message(chat_id, "❌ AI не ответил.", reply_markup=admin_menu()); return
+                image_path = generate_post_image(theme)
+                try:
+                    with DB_LOCK:
+                        conn = get_conn(); c = conn.cursor()
+                        c.execute("INSERT INTO posts_history (content, topic, image_path) VALUES (?, ?, ?)", (post, theme, image_path if image_path else ""))
+                        c.execute("UPDATE stats SET posts_count = posts_count + 1")
+                        if image_path: c.execute("UPDATE stats SET images_generated = images_generated + 1")
+                        conn.commit(); conn.close()
+                except Exception:
+                    pass
                 
-                if img:
-                    caption = post[:900] + "..." if len(post) > 900 else post
-                    with open(img, 'rb') as photo:
-                        bot.send_photo(CHANNEL_ID, photo, caption=caption)
-                    os.remove(img)
-                    if len(post) > 900:
+                try:
+                    if image_path:
+                        with open(image_path, 'rb') as photo:
+                            safe_send_photo(CHANNEL_ID, photo, caption=post)
+                        os.remove(image_path)
+                    else:
                         bot.send_message(CHANNEL_ID, post)
-                else:
-                    bot.send_message(CHANNEL_ID, post)
-                
-                bot.send_message(chat_id, "✅ Пост с супер-картинкой отправлен!", 
-                               reply_markup=admin_menu())
-            else:
-                bot.send_message(chat_id, "❌ Ошибка.", reply_markup=admin_menu())
+                    bot.send_message(chat_id, "✅ Пост с супер-картинкой отправлен в канал!", reply_markup=admin_menu())
+                except Exception as e:
+                    bot.send_message(chat_id, f"❌ Ошибка: {e}", reply_markup=admin_menu())
+            threading.Thread(target=_gen, daemon=True).start()
             sessions[chat_id] = {}
         else:
-            bot.send_message(chat_id, "❌ Сначала выбери действие в админке.", 
-                           reply_markup=admin_menu())
-            
+            bot.send_message(chat_id, "❌ Сначала выбери действие в админке", reply_markup=admin_menu())
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        bot.send_message(chat_id, f"❌ Ошибка: {str(e)}", reply_markup=admin_menu())
 
 # ============================================================
-# 🚀 ЗАПУСК БОТА
+# ПЛАНИРОВЩИК (С ДЕДУПЛИКАЦИЕЙ)
 # ============================================================
 
-def start_bot():
+SCHEDULER_STATE = {"last_post_hour": None, "last_test_hour": None, "last_checkin_minute": None}
+
+def scheduler_loop():
+    while True:
+        try:
+            now = datetime.now(TIMEZONE)
+            now_key = now.strftime('%Y-%m-%d')
+            
+            # Посты: 10, 16, 20 — один раз в час
+            if now.hour in (10, 16, 20) and now.minute < 5 and SCHEDULER_STATE.get("last_post_hour") != (now_key, now.hour):
+                SCHEDULER_STATE["last_post_hour"] = (now_key, now.hour)
+                try:
+                    with DB_LOCK:
+                        conn = get_conn(); c = conn.cursor()
+                        c.execute("SELECT topic FROM used_topics ORDER BY used_at DESC LIMIT 10")
+                        used = [row[0] for row in c.fetchall()]
+                        available = [t for t in CHANNEL_THEMES if t not in used]
+                        if not available:
+                            c.execute("DELETE FROM used_topics"); conn.commit()
+                            available = CHANNEL_THEMES
+                        topic = random.choice(available)
+                        c.execute("INSERT OR IGNORE INTO used_topics (topic) VALUES (?)", (topic,))
+                        conn.commit(); conn.close()
+                    
+                    def _gen():
+                        post = generate_post(topic)
+                        if post:
+                            img = generate_post_image(topic)
+                            try:
+                                if img:
+                                    with open(img, 'rb') as photo:
+                                        safe_send_photo(CHANNEL_ID, photo, caption=post)
+                                    os.remove(img)
+                                else:
+                                    bot.send_message(CHANNEL_ID, post)
+                                with DB_LOCK:
+                                    conn = get_conn(); c = conn.cursor()
+                                    c.execute("INSERT INTO posts_history (content, topic) VALUES (?, ?)", (post, topic))
+                                    c.execute("UPDATE stats SET posts_count = posts_count + 1"); conn.commit(); conn.close()
+                            except Exception as e:
+                                logger.error(f"Ошибка пост: {e}")
+                    threading.Thread(target=_gen, daemon=True).start()
+                except Exception as e:
+                    logger.error(f"Ошибка планировщика постов: {e}")
+            
+            # Тест: 13:00
+            if now.hour == 13 and now.minute < 5 and SCHEDULER_STATE.get("last_test_hour") != (now_key, 13):
+                SCHEDULER_STATE["last_test_hour"] = (now_key, 13)
+                topic = random.choice(CHANNEL_THEMES)
+                def _gen():
+                    questions = generate_test_questions(topic, 10)
+                    if questions:
+                        test_text = f"🔮 ТЕСТ ДНЯ: «{topic.title()}» (10 вопросов)\n\n"
+                        for i, q in enumerate(questions[:3], 1):
+                            test_text += f"{i}. {q['question']}\n"
+                        test_text += f"\n🎯 Пройти полный тест в боте: @{get_bot_username()}?start=test_daily"
+                        try:
+                            bot.send_message(CHANNEL_ID, test_text)
+                        except Exception as e:
+                            logger.error(f"Ошибка отправки теста: {e}")
+                threading.Thread(target=_gen, daemon=True).start()
+            
+            # Чек-ины: раз в 10 минут
+            minute_key = (now_key, now.hour, now.minute // 10)
+            if SCHEDULER_STATE.get("last_checkin_minute") != minute_key:
+                SCHEDULER_STATE["last_checkin_minute"] = minute_key
+                try:
+                    now_naive = datetime.now()
+                    with DB_LOCK:
+                        conn = get_conn(); c = conn.cursor()
+                        c.execute("""SELECT chat_id, session_id FROM checkins 
+                                     WHERE is_done = 0 AND checkin_date <= ?""", 
+                                  (now_naive.isoformat(),))
+                        checkins = c.fetchall()
+                        for chat_id, session_id in checkins:
+                            c.execute("UPDATE checkins SET is_done = 1 WHERE chat_id = ? AND session_id = ?", (chat_id, session_id))
+                        conn.commit(); conn.close()
+                    for chat_id, _ in checkins:
+                        try:
+                            bot.send_message(
+                                chat_id,
+                                "🧠 Привет! Прошло 3 дня после нашего сеанса.\n\n"
+                                "Как ты себя чувствуешь?\n"
+                                "Что изменилось?\n"
+                                "Напиши мне — я здесь."
+                            )
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.error(f"Ошибка чек-инов: {e}")
+            
+            time.sleep(30)
+        except Exception as e:
+            logger.error(f"Ошибка планировщика: {e}")
+            time.sleep(60)
+
+# ============================================================
+# FLASK + ЗАПУСК (нерекурсивный)
+# ============================================================
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return f"✅ {BOT_NAME} v{BOT_VERSION}"
+
+@app.route('/health')
+def health():
+    return {"status": "ok", "time": datetime.now().isoformat()}
+
+def run_flask():
     try:
-        logger.info("🤖 ЗАПУСК БОТА...")
-        
-        scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
-        scheduler_thread.start()
-        logger.info("✅ Планировщик запущен")
-        
-        kill_409()
-        
-        logger.info(f"✅ {BOT_NAME} v{BOT_VERSION} ГОТОВ К РАБОТЕ")
-        bot.infinity_polling(timeout=30, long_polling_timeout=30)
-        
+        port = int(os.environ.get('PORT', 5000))
+        app.run(host='0.0.0.0', port=port, debug=False)
     except Exception as e:
-        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
-        logger.error(traceback.format_exc())
-        time.sleep(10)
-        start_bot()
+        logger.error(f"Ошибка Flask: {e}")
 
-if __name__ == '__main__':
-    logger.info("🔐 ПРОВЕРКА КЛЮЧЕЙ:")
-    logger.info(f"✓ BOT_TOKEN: {BOT_TOKEN[:10]}...")
-    logger.info(f"✓ AGNES_API_KEY: {AGNES_API_KEY[:10]}...")
-    logger.info(f"✓ OPENROUTER_API_KEY: {OPENROUTER_API_KEY[:10]}...")
-    logger.info(f"✓ AI провайдеров: {len(AI_PROVIDERS)}")
-    
-    start_bot()
+def run_bot():
+    logger.info(f"🤖 ЗАПУСК {BOT_NAME} v{BOT_VERSION}")
+    while True:
+        try:
+            super_kill_409()
+            time.sleep(2)
+            bot.remove_webhook()
+            logger.info("✅ Вебхук удален")
+            bot.polling(
+                none_stop=True, 
+                interval=1, 
+                timeout=30, 
+                allowed_updates=['message', 'callback_query', 'pre_checkout_query']
+            )
+        except Exception as e:
+            logger.error(f"❌ Ошибка polling: {e}")
+            if "409" in str(e):
+                super_kill_409()
+            time.sleep(5)
+
+if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
+    logger.info("✅ Веб-сервер запущен")
+    threading.Thread(target=scheduler_loop, daemon=True).start()
+    logger.info("✅ Планировщик запущен")
+    run_bot()
