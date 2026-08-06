@@ -25,13 +25,12 @@ BOT_TOKEN = "8799965983:AAG5cvQiwSMy9KAy9WlAlv-wWTrokLqb2Iw"
 CHANNEL_ID = "@zhizn_plus"
 ADMIN_IDS = [8746212340]
 
-# Agnes AI
 AGNES_API_KEY = "sk-8nqC897jST7vx1brGMUTNLRsVGPXgP7Bcpuwmbl5quaCLN5c"
 AGNES_API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
 
 TIMEZONE = ZoneInfo("Asia/Novokuznetsk")
 
-BOT_VERSION = "11.0.0"
+BOT_VERSION = "12.0.0"
 BOT_NAME = "Жизнь+ Про"
 
 DB_PATH = 'channel.db'
@@ -46,10 +45,6 @@ CHANNEL_THEMES = [
     "мотивация",
     "саморазвитие"
 ]
-
-# ============================================================
-# ЦЕНЫ В ЗВЁЗДАХ
-# ============================================================
 
 PRICE_TEST_20 = 50
 PRICE_COACH = 100
@@ -199,7 +194,7 @@ def ask_ai(system, user, max_tokens=3000, retries=2):
     return None
 
 # ============================================================
-# ГЕНЕРАЦИЯ СУПЕР-КАРТИНОК (AGNES AI + ЕВРОПА)
+# СУПЕР-КАРТИНКИ (AGNES AI + ЕВРОПА)
 # ============================================================
 
 def generate_image(prompt, width=1024, height=768):
@@ -304,7 +299,7 @@ def generate_result_image(text, result):
     return generate_image(prompt)
 
 # ============================================================
-# БАЗА ДАННЫХ
+# БАЗА ДАННЫХ (ПОЛНАЯ)
 # ============================================================
 
 def init_database():
@@ -673,7 +668,7 @@ def handle_successful_payment(message):
         logger.error(f"Ошибка обработки оплаты: {e}")
 
 # ============================================================
-# ПЛАНИРОВЩИК
+# ПЛАНИРОВЩИК (РАСПИСАНИЕ)
 # ============================================================
 
 def get_schedule():
@@ -870,29 +865,10 @@ def start(message):
 def start_button(message):
     start(message)
 
-@bot.message_handler(func=lambda m: m.text == '📤 Поделиться')
-def share_result(message):
-    try:
-        chat_id = message.chat.id
-        referral_link = get_referral_link(chat_id)
-        
-        text = f"""🧠 Я прохожу тесты в боте Жизнь+ и узнаю о себе новое.
-
-Присоединяйся — это честно, глубоко и без пафоса.
-
-🎯 Пройти тест: {referral_link}
-
-#жизньплюс #психология #саморазвитие"""
-        
-        bot.send_message(chat_id, text)
-        bot.send_message(chat_id, "✅ Поделился! Спасибо, что помогаешь другим найти себя.")
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-
 @bot.message_handler(func=lambda m: m.text == '❤️ О канале')
 def about_channel(message):
     try:
-        text = """🧠 **ЖИЗНЬ+** — канал о том, что внутри.
+        text = """🧠 ЖИЗНЬ+ — канал о том, что внутри.
 
 Мы не даём ответов. Мы даём вопросы, которые меняют.
 
@@ -919,7 +895,26 @@ def about_channel(message):
         
         mk = telebot.types.InlineKeyboardMarkup()
         mk.add(telebot.types.InlineKeyboardButton("📢 Перейти в канал", url="https://t.me/zhizn_plus"))
-        bot.send_message(message.chat.id, text, reply_markup=mk, parse_mode='Markdown')
+        bot.send_message(message.chat.id, text, reply_markup=mk)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+
+@bot.message_handler(func=lambda m: m.text == '📤 Поделиться')
+def share_result(message):
+    try:
+        chat_id = message.chat.id
+        referral_link = get_referral_link(chat_id)
+        
+        text = f"""🧠 Я прохожу тесты в боте Жизнь+ и узнаю о себе новое.
+
+Присоединяйся — это честно, глубоко и без пафоса.
+
+🎯 Пройти тест: {referral_link}
+
+#жизньплюс #психология #саморазвитие"""
+        
+        bot.send_message(chat_id, text)
+        bot.send_message(chat_id, "✅ Поделился! Спасибо, что помогаешь другим найти себя.")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
@@ -1509,7 +1504,7 @@ def handle_consultation_answer(message):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-# -------------------- ОБЩИЙ ОБРАБОТЧИК --------------------
+# -------------------- ОБЩИЙ ОБРАБОТЧИК ДЛЯ ВЫБОРА ТЕМЫ --------------------
 
 @bot.message_handler(func=lambda m: m.text in [t.title() for t in CHANNEL_THEMES] and m.chat.id in ADMIN_IDS)
 def handle_theme_selection(message):
